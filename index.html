@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>gfx-lab</title>
+  <title>Flag Modal Lab</title>
 
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css" />
   <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
@@ -14,7 +14,8 @@
       delimiters: [
         {left: '$$', right: '$$', display: true},
         {left: '$', right: '$', display: false}
-      ]
+      ],
+      ignoredClasses: ['modal-body']
     });"
   ></script>
 
@@ -33,6 +34,7 @@
 
   <style>
     :root {
+      --side-panel-width: 23rem;
       --nord0: #2e3440;
       --nord1: #3b4252;
       --nord2: #434c5e;
@@ -40,7 +42,13 @@
       --nord4: #d8dee9;
       --nord5: #e5e9f0;
       --nord6: #eceff4;
+      --nord7: #8fbcbb;
       --nord8: #88c0d0;
+      --nord9: #81a1c1;
+      --nord10: #5e81ac;
+      --nord11: #bf616a;
+      --nord13: #ebcb8b;
+      --nord14: #a3be8c;
     }
 
     * {
@@ -52,7 +60,8 @@
     body {
       min-height: 100vh;
       background:
-        radial-gradient(circle at top, rgba(136, 192, 208, 0.18), transparent 32%),
+        radial-gradient(circle at top, rgba(136, 192, 208, 0.18), transparent 30%),
+        linear-gradient(135deg, rgba(94, 129, 172, 0.15), transparent 55%),
         var(--nord0);
       color: var(--nord4);
       font-family: "JetBrains Mono", monospace, sans-serif;
@@ -63,39 +72,37 @@
       display: block;
     }
 
-    #info {
+    #app {
+      position: relative;
+      min-height: 100vh;
+    }
+
+    #wind-overlay {
       position: fixed;
-      top: 1rem;
-      left: 1rem;
-      z-index: 10;
-      color: var(--nord8);
-      font-size: 0.85rem;
+      inset: 0;
+      z-index: 0;
+      pointer-events: none;
+      opacity: 0.35;
+      background-image:
+        linear-gradient(100deg, transparent 0%, rgba(143, 188, 187, 0.12) 45%, transparent 80%),
+        repeating-linear-gradient(
+          110deg,
+          transparent 0 44px,
+          rgba(136, 192, 208, 0.08) 44px 46px,
+          transparent 46px 92px
+        );
+      animation: drift 14s linear infinite;
     }
 
-    #toolbar {
-      position: fixed;
-      top: 1rem;
-      left: 50%;
-      transform: translateX(-50%);
-      display: flex;
-      gap: 0.75rem;
-      align-items: center;
-      padding: 0.75rem 1rem;
-      border: 1px solid var(--nord3);
-      border-radius: 999px;
-      background: rgba(59, 66, 82, 0.88);
-      backdrop-filter: blur(10px);
-      z-index: 20;
+    @keyframes drift {
+      from {
+        transform: translateX(-3%);
+      }
+      to {
+        transform: translateX(3%);
+      }
     }
 
-    #toolbar label,
-    #toolbar select,
-    #toolbar button {
-      font: inherit;
-    }
-
-    #toolbar select,
-    #toolbar button,
     .modal-toggle {
       border: 1px solid var(--nord3);
       border-radius: 999px;
@@ -104,10 +111,172 @@
       padding: 0.45rem 0.8rem;
     }
 
-    .icon-button {
+    .toggle-chip.active,
+    .mode-button.active {
+      border-color: var(--nord8);
+      background: rgba(94, 129, 172, 0.55);
+      transform: translateY(-1px);
+    }
+
+    #open-math {
+      position: fixed;
+      top: 1rem;
+      left: 19rem;
+      z-index: 30;
+      width: 3.1rem;
+      height: 3.1rem;
+      border: 1px solid rgba(136, 192, 208, 0.22);
+      border-radius: 999px;
+      background: rgba(59, 66, 82, 0.88);
+      color: var(--nord6);
       cursor: pointer;
       font-size: 1.1rem;
       line-height: 1;
+      backdrop-filter: blur(12px);
+      box-shadow: 0 12px 36px rgba(0, 0, 0, 0.22);
+    }
+
+    .lil-gui {
+      --background-color: rgba(59, 66, 82, 0.88);
+      --widget-color: rgba(76, 86, 106, 0.92);
+      --hover-color: rgba(94, 129, 172, 0.58);
+      --focus-color: rgba(143, 188, 187, 0.28);
+      --number-color: #88c0d0;
+      --string-color: #eceff4;
+      --title-background-color: rgba(46, 52, 64, 0.92);
+      --title-text-color: #eceff4;
+      --text-color: #d8dee9;
+      position: fixed;
+      top: 1rem;
+      left: 1rem;
+      z-index: 25;
+      width: 270px;
+      border: 1px solid rgba(136, 192, 208, 0.16);
+      border-radius: 14px;
+      overflow: hidden;
+      box-shadow: 0 16px 38px rgba(0, 0, 0, 0.24);
+      backdrop-filter: blur(12px);
+    }
+
+    .lil-gui.root > .title {
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .lil-gui .controller.option select,
+    .lil-gui input,
+    .lil-gui button {
+      font-family: inherit;
+    }
+
+    #dashboard {
+      position: fixed;
+      right: 1rem;
+      top: 1rem;
+      bottom: 1rem;
+      z-index: 12;
+      width: min(var(--side-panel-width), calc(100vw - 2rem));
+      display: grid;
+      gap: 0.9rem;
+      align-content: start;
+      pointer-events: none;
+    }
+
+    .panel {
+      pointer-events: auto;
+      border: 1px solid rgba(136, 192, 208, 0.18);
+      border-radius: 1.15rem;
+      background: rgba(59, 66, 82, 0.78);
+      backdrop-filter: blur(12px);
+      box-shadow: 0 12px 40px rgba(0, 0, 0, 0.22);
+      padding: 0.95rem;
+    }
+
+    .panel h2,
+    .panel h3 {
+      font-size: 0.85rem;
+      margin-bottom: 0.7rem;
+      color: var(--nord8);
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .panel p {
+      color: var(--nord5);
+      font-size: 0.84rem;
+      line-height: 1.5;
+    }
+
+    #status-banner {
+      color: var(--nord13);
+      min-height: 2.8rem;
+    }
+
+    #mode-gallery {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 0.5rem;
+    }
+
+    .mode-button {
+      padding: 0.6rem 0.5rem;
+      border: 1px solid var(--nord3);
+      border-radius: 0.85rem;
+      background: rgba(67, 76, 94, 0.82);
+      color: var(--nord6);
+      cursor: pointer;
+      text-align: left;
+      transition: transform 140ms ease, border-color 140ms ease, background 140ms ease;
+    }
+
+    .mode-button strong {
+      display: block;
+      color: var(--nord6);
+      font-size: 0.82rem;
+    }
+
+    .mode-button span {
+      color: var(--nord7);
+      font-size: 0.74rem;
+    }
+
+    #amplitude-chart {
+      display: grid;
+      gap: 0.45rem;
+    }
+
+    .bar-row {
+      display: grid;
+      grid-template-columns: 3rem 1fr 3.2rem;
+      align-items: center;
+      gap: 0.55rem;
+      font-size: 0.78rem;
+    }
+
+    .bar-track {
+      overflow: hidden;
+      height: 0.55rem;
+      border-radius: 999px;
+      background: rgba(216, 222, 233, 0.08);
+    }
+
+    .bar-fill {
+      height: 100%;
+      width: 0%;
+      border-radius: 999px;
+      background: linear-gradient(90deg, var(--nord14), var(--nord8));
+      transform-origin: left center;
+    }
+
+    .toggle-row {
+      display: flex;
+      gap: 0.45rem;
+      flex-wrap: wrap;
+      margin-top: 0.8rem;
+    }
+
+    .toggle-chip {
+      cursor: pointer;
     }
 
     #math-modal[hidden] {
@@ -124,7 +293,7 @@
     }
 
     .modal-panel {
-      width: min(720px, calc(100vw - 2rem));
+      width: min(760px, calc(100vw - 2rem));
       max-height: calc(100vh - 2rem);
       overflow: auto;
       border: 1px solid var(--nord3);
@@ -166,28 +335,78 @@
       border-radius: 8px;
       font-size: 0.82rem;
     }
+
+    #canvas {
+      position: fixed;
+      inset: 0;
+      z-index: 1;
+    }
+
+    @media (max-width: 1080px) {
+      #dashboard {
+        left: 1rem;
+        right: 1rem;
+        top: 11.5rem;
+        width: auto;
+      }
+    }
+
+    @media (max-width: 760px) {
+      #open-math {
+        top: 16.2rem;
+        left: 1rem;
+      }
+
+      #dashboard {
+        top: 20rem;
+        bottom: 5.8rem;
+        overflow: auto;
+      }
+
+      #mode-gallery {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+
+      .lil-gui {
+        width: min(270px, calc(100vw - 2rem));
+      }
+    }
   </style>
 </head>
 <body>
-  <div id="info">gfx-lab | Three.js + KaTeX + Nord</div>
-  <div id="toolbar" aria-label="Tool controls">
-    <label for="render-mode">Render Mode</label>
-    <select id="render-mode">
-      <option value="wireframe">Wireframe</option>
-      <option value="solid">Solid</option>
-    </select>
-    <button id="pause-button" type="button">Pause Rotation</button>
+  <div id="app">
+    <div id="wind-overlay" aria-hidden="true"></div>
     <button
       id="open-math"
-      class="icon-button"
       type="button"
       aria-haspopup="dialog"
       aria-controls="math-modal"
       aria-label="Explain the math"
     >💡</button>
+
+    <aside id="dashboard" aria-label="Mode explorer">
+      <section class="panel">
+        <h2>Observation</h2>
+        <p id="status-banner">Trigger an impulse to compare how localized forcing amplifies higher modes at the flag tail.</p>
+        <div class="toggle-row">
+          <button id="toggle-traces" class="toggle-chip active" type="button">Trace Paths</button>
+          <button id="toggle-arrows" class="toggle-chip active" type="button">Mode Arrows</button>
+        </div>
+      </section>
+
+      <section class="panel">
+        <h3>Mode Explorer</h3>
+        <div id="mode-gallery"></div>
+      </section>
+
+      <section class="panel">
+        <h3>Live Modal Amplitudes</h3>
+        <div id="amplitude-chart"></div>
+      </section>
+    </aside>
+
+    <canvas id="canvas"></canvas>
   </div>
-  <div id="info-panel"></div>
-  <canvas id="canvas"></canvas>
 
   <div id="math-modal" role="dialog" aria-modal="true" aria-labelledby="math-title" hidden>
     <div class="modal-panel">
