@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>gfx-lab</title>
+
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css" />
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
+  <script
+    defer
+    src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js"
+    onload="renderMathInElement(document.body, {
+      delimiters: [
+        {left: '$$', right: '$$', display: true},
+        {left: '$', right: '$', display: false}
+      ]
+    });"
+  ></script>
+
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/prism-themes@1.9.0/themes/prism-nord.css" />
+  <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/prism.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-javascript.min.js"></script>
+
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.163.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.163.0/examples/jsm/"
+    }
+  }
+  </script>
+
+  <style>
+    :root {
+      --nord0: #2e3440;
+      --nord1: #3b4252;
+      --nord2: #434c5e;
+      --nord3: #4c566a;
+      --nord4: #d8dee9;
+      --nord5: #e5e9f0;
+      --nord6: #eceff4;
+      --nord8: #88c0d0;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      min-height: 100vh;
+      background:
+        radial-gradient(circle at top, rgba(136, 192, 208, 0.18), transparent 32%),
+        var(--nord0);
+      color: var(--nord4);
+      font-family: "JetBrains Mono", monospace, sans-serif;
+      overflow: hidden;
+    }
+
+    canvas {
+      display: block;
+    }
+
+    #info {
+      position: fixed;
+      top: 1rem;
+      left: 1rem;
+      z-index: 10;
+      color: var(--nord8);
+      font-size: 0.85rem;
+    }
+
+    #toolbar {
+      position: fixed;
+      top: 1rem;
+      left: 50%;
+      transform: translateX(-50%);
+      display: flex;
+      gap: 0.75rem;
+      align-items: center;
+      padding: 0.75rem 1rem;
+      border: 1px solid var(--nord3);
+      border-radius: 999px;
+      background: rgba(59, 66, 82, 0.88);
+      backdrop-filter: blur(10px);
+      z-index: 20;
+    }
+
+    #toolbar label,
+    #toolbar select,
+    #toolbar button {
+      font: inherit;
+    }
+
+    #toolbar select,
+    #toolbar button,
+    .modal-toggle {
+      border: 1px solid var(--nord3);
+      border-radius: 999px;
+      background: var(--nord1);
+      color: var(--nord6);
+      padding: 0.45rem 0.8rem;
+    }
+
+    .icon-button {
+      cursor: pointer;
+      font-size: 1.1rem;
+      line-height: 1;
+    }
+
+    #math-modal[hidden] {
+      display: none;
+    }
+
+    #math-modal {
+      position: fixed;
+      inset: 0;
+      z-index: 50;
+      display: grid;
+      place-items: center;
+      background: rgba(46, 52, 64, 0.78);
+    }
+
+    .modal-panel {
+      width: min(720px, calc(100vw - 2rem));
+      max-height: calc(100vh - 2rem);
+      overflow: auto;
+      border: 1px solid var(--nord3);
+      border-radius: 20px;
+      background: var(--nord1);
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.35);
+      padding: 1.25rem;
+    }
+
+    .modal-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 1rem;
+      margin-bottom: 1rem;
+    }
+
+    .modal-header h2 {
+      color: var(--nord8);
+      font-size: 1rem;
+    }
+
+    .modal-actions {
+      display: flex;
+      gap: 0.5rem;
+      align-items: center;
+    }
+
+    .modal-body {
+      display: grid;
+      gap: 0.85rem;
+      color: var(--nord5);
+      line-height: 1.7;
+    }
+
+    .modal-body pre[class*="language-"] {
+      margin: 0;
+      overflow-x: auto;
+      border-radius: 8px;
+      font-size: 0.82rem;
+    }
+  </style>
+</head>
+<body>
+  <div id="info">gfx-lab | Three.js + KaTeX + Nord</div>
+  <div id="toolbar" aria-label="Tool controls">
+    <label for="render-mode">Render Mode</label>
+    <select id="render-mode">
+      <option value="wireframe">Wireframe</option>
+      <option value="solid">Solid</option>
+    </select>
+    <button id="pause-button" type="button">Pause Rotation</button>
+    <button
+      id="open-math"
+      class="icon-button"
+      type="button"
+      aria-haspopup="dialog"
+      aria-controls="math-modal"
+      aria-label="Explain the math"
+    >💡</button>
+  </div>
+  <div id="info-panel"></div>
+  <canvas id="canvas"></canvas>
+
+  <div id="math-modal" role="dialog" aria-modal="true" aria-labelledby="math-title" hidden>
+    <div class="modal-panel">
+      <div class="modal-header">
+        <h2 id="math-title">Math Behind the Scene</h2>
+        <div class="modal-actions">
+          <button id="language-toggle" class="modal-toggle" type="button">Eng/中</button>
+          <button id="close-math" class="modal-toggle" type="button" aria-label="Close">Close</button>
+        </div>
+      </div>
+      <div id="math-content" class="modal-body"></div>
+    </div>
+  </div>
+
+  <script type="module" src="./src/main.js"></script>
+</body>
+</html>
