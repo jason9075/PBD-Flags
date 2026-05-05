@@ -27,6 +27,7 @@ const poleHeight = 6.7;
 const poleRadius = 0.05;
 const FLAG_TOP_OFFSET = 0.1;
 const FLAG_TOP_Y = poleHeight * 0.5 - FLAG_TOP_OFFSET;
+const POLE_X = -1.2 * REST_X;
 const TRACE_LENGTH = 54;
 const DISPLACEMENT_DIRECTION = new THREE.Vector3(0.12, 0, 1).normalize();
 const WIND_DISPLACEMENT_DIRECTION = new THREE.Vector3(1, 0, -0.12).normalize();
@@ -90,7 +91,6 @@ const state = {
   massScale: 1,
   windEnabled: false,
   windMode: "steady",
-  reverseWind: false,
   renderMode: "solid",
   showTraces: true,
   showArrows: true,
@@ -110,7 +110,6 @@ const ui = {
   mass: state.massScale,
   wind: state.windEnabled,
   windMode: state.windMode,
-  reverseWind: state.reverseWind,
   render: state.renderMode,
   motion: state.isAnimating,
   tracePaths: state.showTraces,
@@ -167,8 +166,12 @@ function nodeIndex(row, col) {
   return row * COLS + col;
 }
 
+function rotateDirectionByAnchor(direction) {
+  return direction.clone();
+}
+
 function createRestPosition(row, col) {
-  return new THREE.Vector3((col - 1.2) * REST_X, FLAG_TOP_Y - row * REST_Y, 0);
+  return new THREE.Vector3(POLE_X + col * REST_X, FLAG_TOP_Y - row * REST_Y, 0);
 }
 
 function buildNodeLabels() {
@@ -205,10 +208,8 @@ for (let row = 0; row < ROWS; row += 1) {
       fixed,
       anchor,
       position: anchor.clone(),
-      sag: 0,
-      sagSpeed: 0,
+      velocity: new THREE.Vector3(),
       displacement: 0,
-      speed: 0,
     });
   }
 }
@@ -224,6 +225,8 @@ for (let row = 0; row < ROWS; row += 1) {
         weight: 1,
         axis: "horizontal",
         cut: false,
+        visible: true,
+        restLength: nodes[current].anchor.distanceTo(nodes[right].anchor),
       });
     }
     if (row < ROWS - 1) {
@@ -234,10 +237,42 @@ for (let row = 0; row < ROWS; row += 1) {
         weight: 1,
         axis: "vertical",
         cut: false,
+        visible: true,
+        restLength: nodes[current].anchor.distanceTo(nodes[down].anchor),
       });
     }
   }
 }
+
+for (let row = 0; row < ROWS - 1; row += 1) {
+  for (let col = 0; col < COLS - 1; col += 1) {
+    const a = nodeIndex(row, col);
+    const b = nodeIndex(row, col + 1);
+    const c = nodeIndex(row + 1, col);
+    const d = nodeIndex(row + 1, col + 1);
+
+    links.push({
+      a,
+      b: d,
+      weight: 0.55,
+      axis: "shear",
+      cut: false,
+      visible: false,
+      restLength: nodes[a].anchor.distanceTo(nodes[d].anchor),
+    });
+    links.push({
+      a: b,
+      b: c,
+      weight: 0.55,
+      axis: "shear",
+      cut: false,
+      visible: false,
+      restLength: nodes[b].anchor.distanceTo(nodes[c].anchor),
+    });
+  }
+}
+
+const visibleLinks = links.filter((link) => link.visible !== false);
 
 for (let row = 0; row < ROWS - 1; row += 1) {
   for (let col = 0; col < COLS - 1; col += 1) {
@@ -265,7 +300,7 @@ const flagMesh = new THREE.Mesh(flagGeometry, flagMaterial);
 scene.add(flagMesh);
 
 const edgeGeometry = new THREE.BufferGeometry();
-edgeGeometry.setAttribute("position", new THREE.Float32BufferAttribute(new Float32Array(links.length * 2 * 3), 3));
+edgeGeometry.setAttribute("position", new THREE.Float32BufferAttribute(new Float32Array(visibleLinks.length * 2 * 3), 3));
 const edgeLines = new THREE.LineSegments(
   edgeGeometry,
   new THREE.LineBasicMaterial({ color: 0x88c0d0, transparent: true, opacity: 0.72 }),
@@ -552,68 +587,69 @@ function renderModalContent() {
 }
 
 function updateNodeMotion(dt) {
-  const damping = 2.5;
-  const gravity = 2.4;
-  const mass = state.massScale;
-  const displacementStiffness = state.stiffnessScale * 7.8;
-  const sagStiffness = state.stiffnessScale * 5.4;
-  const sagDamping = 3.8;
-  const displacementForces = Array(nodes.length).fill(0);
-  const sagForces = Array(nodes.length).fill(0);
+  const gravity = new THREE.Vector3(0, -4.4, 0);
+  const damping = Math.exp(-2.8 * dt / state.massScale);
+  const stretchStiffness = Math.min(0.34 + state.stiffnessScale * 0.2, 0.92);
+  const constraintIterations = 7;
+  const displacementDirection = rotateDirectionByAnchor(DISPLACEMENT_DIRECTION);
+  const previousPositions = nodes.map((node) => node.position.clone());
 
-  for (const link of links) {
-    if (link.cut) {
+  for (const node of nodes) {
+    if (node.fixed) {
+      node.position.copy(node.anchor);
+      node.velocity.set(0, 0, 0);
       continue;
     }
 
-    const left = nodes[link.a];
-    const right = nodes[link.b];
-    const displacementK = displacementStiffness * link.weight;
-    const sagK = sagStiffness * link.weight;
-    const displacementDelta = left.displacement - right.displacement;
-    const sagDelta = left.sag - right.sag;
+    node.velocity.addScaledVector(gravity, dt);
+    node.velocity.multiplyScalar(damping);
+    node.position.addScaledVector(node.velocity, dt);
+  }
 
-    if (!left.fixed) {
-      displacementForces[left.index] += -displacementDelta * displacementK;
-      sagForces[left.index] += -sagDelta * sagK;
+  for (let iteration = 0; iteration < constraintIterations; iteration += 1) {
+    for (const node of nodes) {
+      if (node.fixed) {
+        node.position.copy(node.anchor);
+      }
     }
-    if (!right.fixed) {
-      displacementForces[right.index] += displacementDelta * displacementK;
-      sagForces[right.index] += sagDelta * sagK;
+
+    for (const link of links) {
+      if (link.cut) {
+        continue;
+      }
+
+      const a = nodes[link.a];
+      const b = nodes[link.b];
+      const delta = b.position.clone().sub(a.position);
+      const distance = delta.length();
+      if (distance < 1e-6) {
+        continue;
+      }
+
+      const difference = (distance - link.restLength) / distance;
+      const correction = delta.multiplyScalar(0.5 * stretchStiffness * difference);
+
+      if (!a.fixed && !b.fixed) {
+        a.position.add(correction);
+        b.position.sub(correction);
+      } else if (a.fixed && !b.fixed) {
+        b.position.sub(correction.multiplyScalar(2));
+      } else if (!a.fixed && b.fixed) {
+        a.position.add(correction.multiplyScalar(2));
+      }
     }
   }
 
   for (const node of nodes) {
     if (node.fixed) {
-      node.sag = 0;
-      node.sagSpeed = 0;
+      node.position.copy(node.anchor);
+      node.velocity.set(0, 0, 0);
       node.displacement = 0;
-      node.speed = 0;
       continue;
     }
 
-    let acceleration = -gravity * state.stiffnessScale + displacementForces[node.index] / mass;
-    acceleration += -(node.speed * damping) / mass;
-    node.speed += acceleration * dt;
-    node.displacement += node.speed * dt;
-
-    let sagAcceleration = gravity + sagForces[node.index] / mass;
-    const anchorBias = node.col / (COLS - 1);
-    const targetSag = getColumnSag(node.col, state.stiffnessScale) * (0.5 + anchorBias * 0.9);
-    sagAcceleration += -(node.sag - targetSag) * (1.2 + anchorBias * 2.1);
-    sagAcceleration += -(node.sagSpeed * sagDamping) / mass;
-    node.sagSpeed += sagAcceleration * dt;
-    node.sag += node.sagSpeed * dt;
-    node.sag = Math.max(0, node.sag);
-  }
-
-  for (const node of nodes) {
-    node.position.copy(node.anchor);
-    if (!node.fixed) {
-      node.position.y -= node.sag + Math.abs(node.displacement) * 0.05;
-      node.position.z = node.displacement;
-      node.position.x += node.displacement * 0.12;
-    }
+    node.velocity.copy(node.position).sub(previousPositions[node.index]).multiplyScalar(1 / Math.max(dt, 1e-4));
+    node.displacement = node.position.clone().sub(node.anchor).dot(displacementDirection);
   }
 }
 
@@ -624,24 +660,35 @@ function applyWindDrive(now) {
 
   for (const index of FREE_INDICES) {
     const node = nodes[index];
-    node.speed += getWindDriveValue(now, node) / state.massScale;
+    const windDirection = getWindDirection(now, node);
+    node.velocity.addScaledVector(windDirection, getWindDriveValue(now, node) / state.massScale);
   }
+}
+
+function getWindDirection(now, node = nodes[FREE_INDICES[0]]) {
+  const baseDirection = WIND_DISPLACEMENT_DIRECTION.clone();
+
+  if (state.windMode !== "steady") {
+    return baseDirection;
+  }
+
+  const swayAngle = 0.2 * Math.sin(now * 0.0012 + node.col * 0.6 + node.row * 0.35);
+  return baseDirection.applyAxisAngle(new THREE.Vector3(0, 1, 0), swayAngle).normalize();
 }
 
 function getWindDriveValue(now, node) {
   const phase = now * 0.0018 + node.col * 0.85 + node.row * 0.4;
-  const directionSign = state.reverseWind ? -1 : 1;
 
   if (state.windMode === "pulse") {
     const burst = Math.max(0, Math.sin(now * 0.006 + node.col * 0.7));
-    const ripple = 0.0018 * (0.5 + 0.5 * Math.sin(phase * 0.72));
-    return directionSign * (burst * burst * 0.013 + ripple) * state.forceScale;
+    const ripple = 0.0045 * (0.5 + 0.5 * Math.sin(phase * 0.72));
+    return (burst * burst * 0.042 + ripple) * state.forceScale;
   }
 
-  const baseFlow = 0.0042;
-  const ripple = 0.0016 * (0.5 + 0.5 * Math.sin(phase));
-  const gust = 0.0045 * Math.max(0, Math.sin(phase * 0.47 + 1.2));
-  return directionSign * (baseFlow + ripple + gust) * state.forceScale;
+  const baseFlow = 0.018;
+  const ripple = 0.006 * (0.5 + 0.5 * Math.sin(phase));
+  const gust = 0.02 * Math.max(0, Math.sin(phase * 0.47 + 1.2));
+  return (baseFlow + ripple + gust) * state.forceScale;
 }
 
 function getWindArrowState(now) {
@@ -653,12 +700,20 @@ function getWindArrowState(now) {
   }
 
   let totalDrive = 0;
+  const direction = new THREE.Vector3();
   for (const index of FREE_INDICES) {
-    totalDrive += getWindDriveValue(now, nodes[index]);
+    const node = nodes[index];
+    const drive = getWindDriveValue(now, node);
+    totalDrive += drive;
+    direction.addScaledVector(getWindDirection(now, node), Math.abs(drive));
   }
 
   const averageDrive = totalDrive / FREE_INDICES.length;
-  const direction = WIND_DISPLACEMENT_DIRECTION.clone().multiplyScalar(Math.sign(averageDrive) || 1);
+  if (direction.lengthSq() < 1e-6) {
+    direction.copy(getWindDirection(now));
+  } else {
+    direction.normalize();
+  }
   const length = 1.35 + Math.min(Math.abs(averageDrive) / 0.013, 1) * 1.1;
 
   return { direction, length };
@@ -699,7 +754,7 @@ function restoreAllLinks() {
 }
 
 function updateHighlightedLink() {
-  const hovered = links[state.hoveredLinkIndex];
+  const hovered = visibleLinks[state.hoveredLinkIndex];
   if (!state.cutMode || !hovered || hovered.cut) {
     highlightedLink.visible = false;
     return;
@@ -735,7 +790,7 @@ function updateHoveredLink(clientX, clientY) {
   let closestIndex = -1;
   let closestDistance = threshold;
 
-  links.forEach((link, index) => {
+  visibleLinks.forEach((link, index) => {
     if (link.cut) {
       return;
     }
@@ -767,7 +822,7 @@ function updateHoveredLink(clientX, clientY) {
 }
 
 function cutHoveredLink() {
-  const hovered = links[state.hoveredLinkIndex];
+  const hovered = visibleLinks[state.hoveredLinkIndex];
   if (!state.cutMode || !hovered || hovered.cut) {
     return;
   }
@@ -798,7 +853,7 @@ function updateGeometry() {
     }
   });
 
-  links.forEach((link, edgeIndex) => {
+  visibleLinks.forEach((link, edgeIndex) => {
     const a = nodes[link.a].position;
     const b = link.cut ? a : nodes[link.b].position;
     linePositions.setXYZ(edgeIndex * 2, a.x, a.y, a.z + 0.01);
@@ -924,7 +979,7 @@ function updateModeArrows(dominantIndex, dominantValue) {
       return;
     }
     const amplitude = modes[dominantIndex].vector[index];
-    const direction = new THREE.Vector3(0.2, 0, amplitude).normalize();
+    const direction = rotateDirectionByAnchor(new THREE.Vector3(0.2, 0, amplitude));
     const origin = nodes[FREE_INDICES[index]].position;
     arrow.position.copy(origin);
     arrow.setDirection(direction);
@@ -935,7 +990,8 @@ function updateModeArrows(dominantIndex, dominantValue) {
 
 function updateWindDirectionArrow(now = performance.now()) {
   const topLeft = nodes[nodeIndex(0, 0)].position;
-  const origin = new THREE.Vector3(topLeft.x + 0.15, poleHeight * 0.5 + 0.09, 0);
+  const anchorOffset = new THREE.Vector3(0.15, 0, 0);
+  const origin = new THREE.Vector3(topLeft.x, poleHeight * 0.5 + 0.09, topLeft.z).add(anchorOffset);
   const { direction, length } = getWindArrowState(now);
 
   windArrowDirection.copy(direction);
@@ -971,7 +1027,7 @@ function updateImpulseArrow(now = performance.now()) {
   const opacity = 1 - progress;
 
   impulseArrow.position.copy(origin);
-  impulseArrow.setDirection(DISPLACEMENT_DIRECTION);
+  impulseArrow.setDirection(rotateDirectionByAnchor(DISPLACEMENT_DIRECTION));
   impulseArrow.setLength(length, 0.2, 0.12);
   impulseArrow.line.material.opacity = opacity;
   impulseArrow.cone.material.opacity = opacity;
@@ -980,12 +1036,13 @@ function updateImpulseArrow(now = performance.now()) {
 
 function applyImpulse(target, magnitude) {
   const selected = getImpulseSelection(target);
+  const impulseDirection = rotateDirectionByAnchor(DISPLACEMENT_DIRECTION);
 
   selected.forEach((index) => {
     const node = nodes[index];
     const rowBias = 1 - Math.abs(node.row - 1) * 0.18;
     const sign = node.row === 1 ? 1 : 0.86;
-    node.speed += (magnitude * rowBias * sign) / state.massScale;
+    node.velocity.addScaledVector(impulseDirection, (magnitude * rowBias * sign) / state.massScale);
   });
 
   state.lastImpulseTarget = target;
@@ -1000,8 +1057,9 @@ function exciteMode(modeIndex) {
   state.activeMode = modeIndex;
   buildModeGallery();
   const scale = state.forceScale * 0.62;
+  const modeDirection = rotateDirectionByAnchor(DISPLACEMENT_DIRECTION);
   FREE_INDICES.forEach((nodeId, vectorIndex) => {
-    nodes[nodeId].speed += modes[modeIndex].vector[vectorIndex] * scale;
+    nodes[nodeId].velocity.addScaledVector(modeDirection, modes[modeIndex].vector[vectorIndex] * scale);
   });
   state.statusUntil = performance.now() + 2800;
   statusBanner.textContent = `Excited pure mode v${modeIndex + 1}. This isolates its natural deformation pattern.`;
@@ -1018,13 +1076,13 @@ function applyRenderMode(value) {
 
 function resetCalmState() {
   for (const node of nodes) {
-    node.sag = 0;
-    node.sagSpeed = 0;
     node.displacement = 0;
-    node.speed = 0;
+    node.velocity.set(0, 0, 0);
+    node.position.copy(node.anchor);
   }
   state.activeMode = null;
   buildModeGallery();
+  updateGeometry();
   syncGuiState();
   state.statusUntil = performance.now() + 2200;
   statusBanner.textContent = "Reset to flat release. With wind off, the flag now falls under gravity and settles downward.";
@@ -1043,7 +1101,6 @@ function syncGuiState() {
   ui.mass = state.massScale;
   ui.wind = state.windEnabled;
   ui.windMode = state.windMode;
-  ui.reverseWind = state.reverseWind;
   ui.render = state.renderMode;
   ui.motion = state.isAnimating;
   ui.tracePaths = state.showTraces;
@@ -1140,14 +1197,6 @@ const windModeController = gui.add(ui, "windMode", ["steady", "pulse"]).name("Wi
     ? "Wind mode set to pulse. When wind is on, the flag receives rhythmic gust bursts."
     : "Wind mode set to steady. When wind is on, the flag receives a continuous breeze.";
 });
-const reverseWindController = gui.add(ui, "reverseWind").name("Reverse Wind").onChange((value) => {
-  state.reverseWind = value;
-  updateWindDirectionArrow();
-  state.statusUntil = performance.now() + 2200;
-  statusBanner.textContent = value
-    ? "Reverse wind enabled. Wind drive and the arrow now point in the opposite direction."
-    : "Reverse wind disabled. Wind drive returned to the default direction.";
-});
 windModeController.domElement.addEventListener("mouseenter", () => {
   windInfo.hidden = false;
 });
@@ -1193,7 +1242,6 @@ guiControllers.push(
   }),
   windController,
   windModeController,
-  reverseWindController,
   gui.add(ui, "render", ["solid", "wireframe"]).name("Render").onChange((value) => {
     applyRenderMode(value);
   }),
