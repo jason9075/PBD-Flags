@@ -6,6 +6,7 @@ const canvas = document.getElementById("canvas");
 const nodeLabelsOverlay = document.getElementById("node-labels");
 const impulseInfo = document.getElementById("impulse-info");
 const windInfo = document.getElementById("wind-info");
+const modeInfo = document.getElementById("mode-info");
 const statusBanner = document.getElementById("status-banner");
 const amplitudeChart = document.getElementById("amplitude-chart");
 const modeGallery = document.getElementById("mode-gallery");
@@ -23,6 +24,7 @@ const REST_X = 1.15;
 const REST_Y = 0.85;
 const FLAG_TOP_Y = 1.55;
 const TRACE_LENGTH = 54;
+const DISPLACEMENT_DIRECTION = new THREE.Vector3(0.12, 0, 1).normalize();
 const WIND_DISPLACEMENT_DIRECTION = new THREE.Vector3(1, 0, -0.12).normalize();
 const FREE_INDICES = [];
 const FREE_LOOKUP = new Map();
@@ -88,6 +90,8 @@ const state = {
   showArrows: true,
   activeMode: null,
   statusUntil: 0,
+  impulseUntil: 0,
+  lastImpulseTarget: "tip",
 };
 
 const ui = {
@@ -127,6 +131,18 @@ const windDirectionArrow = new THREE.ArrowHelper(
 const windArrowDirection = new THREE.Vector3(1, 0, 0);
 windDirectionArrow.visible = false;
 scene.add(windDirectionArrow);
+const impulseArrow = new THREE.ArrowHelper(
+  DISPLACEMENT_DIRECTION.clone(),
+  new THREE.Vector3(0, 0, 0),
+  1.2,
+  0xbf616a,
+  0.2,
+  0.12,
+);
+impulseArrow.visible = false;
+impulseArrow.line.material.transparent = true;
+impulseArrow.cone.material.transparent = true;
+scene.add(impulseArrow);
 
 function nodeIndex(row, col) {
   return row * COLS + col;
@@ -304,7 +320,7 @@ for (let index = 0; index < tailIndices.length; index += 1) {
   traceGeometry.setAttribute("position", new THREE.Float32BufferAttribute(new Float32Array(TRACE_LENGTH * 3), 3));
   const line = new THREE.Line(
     traceGeometry,
-    new THREE.LineBasicMaterial({ color: 0xa3be8c, transparent: true, opacity: 0.44 }),
+    new THREE.LineBasicMaterial({ color: 0xebcb8b, transparent: true, opacity: 0.44 }),
   );
   traceLines.push(line);
   scene.add(line);
@@ -631,6 +647,16 @@ function getWindArrowState(now) {
   return { direction, length };
 }
 
+function getImpulseSelection(target) {
+  const map = {
+    tip: FREE_INDICES.filter((index) => nodes[index].col === COLS - 1),
+    mid: FREE_INDICES.filter((index) => nodes[index].col >= 1 && nodes[index].col <= 2),
+    global: FREE_INDICES,
+  };
+
+  return map[target];
+}
+
 function updateGeometry() {
   const surfacePositions = flagGeometry.getAttribute("position");
   const linePositions = edgeGeometry.getAttribute("position");
@@ -793,13 +819,41 @@ function updateWindDirectionArrow(now = performance.now()) {
   windDirectionArrow.visible = state.windEnabled;
 }
 
+function updateImpulseArrow(now = performance.now()) {
+  if (now >= state.impulseUntil) {
+    impulseArrow.visible = false;
+    impulseArrow.line.material.opacity = 0;
+    impulseArrow.cone.material.opacity = 0;
+    return;
+  }
+
+  const selected = getImpulseSelection(state.lastImpulseTarget);
+  if (!selected.length) {
+    impulseArrow.visible = false;
+    return;
+  }
+
+  const origin = new THREE.Vector3();
+  selected.forEach((index) => {
+    origin.add(nodes[index].position);
+  });
+  origin.multiplyScalar(1 / selected.length);
+  origin.y += 0.45;
+
+  const progress = 1 - Math.max(0, state.impulseUntil - now) / 1000;
+  const length = 1.55 - progress * 0.35;
+  const opacity = 1 - progress;
+
+  impulseArrow.position.copy(origin);
+  impulseArrow.setDirection(DISPLACEMENT_DIRECTION);
+  impulseArrow.setLength(length, 0.2, 0.12);
+  impulseArrow.line.material.opacity = opacity;
+  impulseArrow.cone.material.opacity = opacity;
+  impulseArrow.visible = true;
+}
+
 function applyImpulse(target, magnitude) {
-  const map = {
-    tip: FREE_INDICES.filter((index) => nodes[index].col === COLS - 1),
-    mid: FREE_INDICES.filter((index) => nodes[index].col >= 1 && nodes[index].col <= 2),
-    global: FREE_INDICES,
-  };
-  const selected = map[target];
+  const selected = getImpulseSelection(target);
 
   selected.forEach((index) => {
     const node = nodes[index];
@@ -808,6 +862,10 @@ function applyImpulse(target, magnitude) {
     node.speed += magnitude * rowBias * sign;
   });
 
+  state.lastImpulseTarget = target;
+  state.impulseUntil = performance.now() + 1000;
+  impulseArrow.line.material.opacity = 1;
+  impulseArrow.cone.material.opacity = 1;
   state.statusUntil = performance.now() + 2600;
   statusBanner.textContent = `Applied ${target} pulse at ${magnitude.toFixed(1)}x force. Watch which bars rise first.`;
 }
@@ -940,6 +998,17 @@ windModeController.domElement.addEventListener("mouseleave", () => {
   windInfo.hidden = true;
 });
 
+const modeCuesController = gui.add(ui, "modeArrows").name("Mode Cues").onChange((value) => {
+  state.showArrows = value;
+  updateControls();
+});
+modeCuesController.domElement.addEventListener("mouseenter", () => {
+  modeInfo.hidden = false;
+});
+modeCuesController.domElement.addEventListener("mouseleave", () => {
+  modeInfo.hidden = true;
+});
+
 guiControllers.push(
   impulseController,
   gui.add(ui, "force", 0.3, 3.2, 0.1).name("Force").onChange((value) => {
@@ -963,10 +1032,7 @@ guiControllers.push(
     state.showTraces = value;
     updateControls();
   }),
-  gui.add(ui, "modeArrows").name("Mode Arrows").onChange((value) => {
-    state.showArrows = value;
-    updateControls();
-  }),
+  modeCuesController,
 );
 
 gui.add(ui, "applyPulse").name("Apply Pulse");
@@ -1013,6 +1079,7 @@ function animate(now) {
 
   controls.update();
   updateWindDirectionArrow(now);
+  updateImpulseArrow(now);
   updateNodeLabels();
   updateWindLabel();
   renderer.render(scene, camera);

@@ -285,6 +285,43 @@
       color: var(--nord14);
     }
 
+    #mode-info {
+      position: fixed;
+      top: 15.6rem;
+      left: 18.5rem;
+      z-index: 24;
+      width: min(22rem, calc(100vw - 2rem));
+      padding: 0.85rem 0.95rem;
+      border: 1px solid rgba(136, 192, 208, 0.16);
+      border-radius: 1rem;
+      background: rgba(59, 66, 82, 0.84);
+      color: var(--nord5);
+      backdrop-filter: blur(12px);
+      box-shadow: 0 14px 32px rgba(0, 0, 0, 0.2);
+    }
+
+    #mode-info[hidden] {
+      display: none;
+    }
+
+    #mode-info h3 {
+      margin-bottom: 0.55rem;
+      color: var(--nord8);
+      font-size: 0.8rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    #mode-info p {
+      margin: 0.35rem 0;
+      font-size: 0.78rem;
+      line-height: 1.45;
+    }
+
+    #mode-info code {
+      color: var(--nord14);
+    }
+
     #dashboard {
       position: fixed;
       right: 1rem;
@@ -538,7 +575,13 @@
       <p><strong>Not random</strong>: the current wind uses deterministic sine-based functions with row/column phase offsets, so it looks varied without using noise.</p>
       <p><strong>Steady</strong>: combines a smooth sinusoidal term with a positive gust envelope for a continuous breeze.</p>
       <p><strong>Pulse</strong>: uses burst-shaped rhythmic gusts, so the flag is driven in repeated packets rather than a smooth stream.</p>
-      <p><strong>Direction</strong>: force is applied into the current vibration degree of freedom, not a full 3D wind vector field.</p>
+      <p><strong>Direction cue</strong>: the wind arrow shows the shared visual push direction, but the solver still adds scalar velocity into <code>node.speed</code> rather than integrating a full 3D wind field.</p>
+    </div>
+    <div id="mode-info" hidden>
+      <h3>Mode Cues</h3>
+      <p><strong>Meaning</strong>: these arrows are a cue for the current dominant mode response, not a strict local displacement direction.</p>
+      <p><strong>How they are built</strong>: each cue uses a fixed forward bias plus the dominant mode coefficient, so it is best read as sign and relative strength.</p>
+      <p><strong>Use it for</strong>: spotting which regions participate more strongly in the active mode after an impulse or wind burst.</p>
     </div>
     <div id="status-banner">Trigger an impulse to compare how localized forcing amplifies higher modes at the flag tail.</div>
 
