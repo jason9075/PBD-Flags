@@ -83,36 +83,42 @@ const state = {
   forceTarget: "tip",
   forceScale: 1.6,
   stiffnessScale: 1.2,
+  massScale: 1,
   windEnabled: false,
   windMode: "steady",
   renderMode: "solid",
   showTraces: true,
   showArrows: true,
+  cutMode: false,
   activeMode: null,
   statusUntil: 0,
   impulseUntil: 0,
   lastImpulseTarget: "tip",
+  hoveredLinkIndex: -1,
+  pointerInsideCanvas: false,
 };
 
 const ui = {
   impulseTarget: state.forceTarget,
   force: state.forceScale,
   stiffness: state.stiffnessScale,
+  mass: state.massScale,
   wind: state.windEnabled,
   windMode: state.windMode,
   render: state.renderMode,
   motion: state.isAnimating,
   tracePaths: state.showTraces,
   modeArrows: state.showArrows,
+  cutMode: state.cutMode,
   applyPulse: () => applyImpulse(state.forceTarget, state.forceScale),
   resetCalm: () => resetCalmState(),
+  restoreLinks: () => restoreAllLinks(),
   resetView: () => resetView(),
 };
 const guiControllers = [];
 
 const nodes = [];
-const springs = [];
-const edges = [];
+const links = [];
 const triangles = [];
 const tailIndices = [COLS - 1, 2 * COLS - 1, 3 * COLS - 1];
 const traceStates = tailIndices.map(() => []);
@@ -120,6 +126,13 @@ const traceLines = [];
 const amplitudeRows = [];
 const arrowHelpers = [];
 const nodeLabelElements = [];
+const pointerScreen = new THREE.Vector2();
+const projectedA = new THREE.Vector3();
+const projectedB = new THREE.Vector3();
+const highlightedLinkPositions = [
+  new THREE.Vector3(),
+  new THREE.Vector3(),
+];
 const windDirectionArrow = new THREE.ArrowHelper(
   new THREE.Vector3(1, 0, 0),
   new THREE.Vector3(0, 0, 0),
@@ -199,13 +212,23 @@ for (let row = 0; row < ROWS; row += 1) {
     const current = nodeIndex(row, col);
     if (col < COLS - 1) {
       const right = nodeIndex(row, col + 1);
-      edges.push([current, right]);
-      springs.push([current, right, 1]);
+      links.push({
+        a: current,
+        b: right,
+        weight: 1,
+        axis: "horizontal",
+        cut: false,
+      });
     }
     if (row < ROWS - 1) {
       const down = nodeIndex(row + 1, col);
-      edges.push([current, down]);
-      springs.push([current, down, 0.75]);
+      links.push({
+        a: current,
+        b: down,
+        weight: 0.75,
+        axis: "vertical",
+        cut: false,
+      });
     }
   }
 }
@@ -236,12 +259,18 @@ const flagMesh = new THREE.Mesh(flagGeometry, flagMaterial);
 scene.add(flagMesh);
 
 const edgeGeometry = new THREE.BufferGeometry();
-edgeGeometry.setAttribute("position", new THREE.Float32BufferAttribute(new Float32Array(edges.length * 2 * 3), 3));
+edgeGeometry.setAttribute("position", new THREE.Float32BufferAttribute(new Float32Array(links.length * 2 * 3), 3));
 const edgeLines = new THREE.LineSegments(
   edgeGeometry,
   new THREE.LineBasicMaterial({ color: 0x88c0d0, transparent: true, opacity: 0.72 }),
 );
 scene.add(edgeLines);
+const highlightedLink = new THREE.Line(
+  new THREE.BufferGeometry().setFromPoints(highlightedLinkPositions),
+  new THREE.LineBasicMaterial({ color: 0xebcb8b, transparent: true, opacity: 0.95 }),
+);
+highlightedLink.visible = false;
+scene.add(highlightedLink);
 
 const poleGroup = new THREE.Group();
 const poleHeight = 4.7;
@@ -326,13 +355,17 @@ for (let index = 0; index < tailIndices.length; index += 1) {
   scene.add(line);
 }
 
-function buildModeMatrix(stiffnessScale) {
+function buildModeMatrix(stiffnessScale, massScale) {
   const size = FREE_INDICES.length;
   const matrix = Array.from({ length: size }, () => Array(size).fill(0));
-  for (const [a, b, weight] of springs) {
+  for (const link of links) {
+    if (link.cut) {
+      continue;
+    }
+    const { a, b, weight } = link;
     const freeA = FREE_LOOKUP.get(a);
     const freeB = FREE_LOOKUP.get(b);
-    const k = weight * stiffnessScale;
+    const k = (weight * stiffnessScale) / massScale;
     if (freeA !== undefined) {
       matrix[freeA][freeA] += k;
     }
@@ -424,8 +457,10 @@ function jacobiEigenDecomposition(input) {
 let modes = [];
 
 function updateModes() {
-  modes = jacobiEigenDecomposition(buildModeMatrix(state.stiffnessScale));
+  modes = jacobiEigenDecomposition(buildModeMatrix(state.stiffnessScale, state.massScale));
   buildModeGallery();
+  amplitudeRows.length = 0;
+  buildAmplitudeChart();
 }
 
 function getModeLabel(index) {
@@ -520,11 +555,36 @@ function renderModalContent() {
 function updateNodeMotion(dt) {
   const damping = 2.5;
   const gravity = 2.4;
+  const mass = state.massScale;
   const stiffnessScale = state.stiffnessScale * 7.8;
   const coupling = state.stiffnessScale * 3.4;
   const sagStiffness = state.stiffnessScale * 5.4;
   const sagCoupling = state.stiffnessScale * 2.6;
   const sagDamping = 3.8;
+  const displacementForces = Array(nodes.length).fill(0);
+  const sagForces = Array(nodes.length).fill(0);
+
+  for (const link of links) {
+    if (link.cut) {
+      continue;
+    }
+
+    const left = nodes[link.a];
+    const right = nodes[link.b];
+    const displacementK = (link.axis === "horizontal" ? stiffnessScale : coupling) * link.weight;
+    const sagK = (link.axis === "horizontal" ? sagStiffness : sagCoupling) * link.weight;
+    const displacementDelta = left.displacement - right.displacement;
+    const sagDelta = left.sag - right.sag;
+
+    if (!left.fixed) {
+      displacementForces[left.index] += -displacementDelta * displacementK;
+      sagForces[left.index] += -sagDelta * sagK;
+    }
+    if (!right.fixed) {
+      displacementForces[right.index] += displacementDelta * displacementK;
+      sagForces[right.index] += sagDelta * sagK;
+    }
+  }
 
   for (const node of nodes) {
     if (node.fixed) {
@@ -535,57 +595,16 @@ function updateNodeMotion(dt) {
       continue;
     }
 
-    let acceleration = -gravity * state.stiffnessScale;
-    const horizontalNeighbors = [
-      node.col > 0 ? nodes[nodeIndex(node.row, node.col - 1)] : null,
-      node.col < COLS - 1 ? nodes[nodeIndex(node.row, node.col + 1)] : null,
-    ];
-    const verticalNeighbors = [
-      node.row > 0 ? nodes[nodeIndex(node.row - 1, node.col)] : null,
-      node.row < ROWS - 1 ? nodes[nodeIndex(node.row + 1, node.col)] : null,
-    ];
-
-    for (const neighbor of horizontalNeighbors) {
-      if (!neighbor) {
-        continue;
-      }
-      acceleration += -(node.displacement - neighbor.displacement) * stiffnessScale;
-    }
-
-    for (const neighbor of verticalNeighbors) {
-      if (!neighbor) {
-        continue;
-      }
-      acceleration += -(node.displacement - neighbor.displacement) * coupling;
-    }
-
-    acceleration += -node.speed * damping;
+    let acceleration = -gravity * state.stiffnessScale + displacementForces[node.index] / mass;
+    acceleration += -(node.speed * damping) / mass;
     node.speed += acceleration * dt;
     node.displacement += node.speed * dt;
 
-    let sagAcceleration = gravity;
-    const leftNeighbor = node.col > 0 ? nodes[nodeIndex(node.row, node.col - 1)] : null;
-    const rightNeighbor = node.col < COLS - 1 ? nodes[nodeIndex(node.row, node.col + 1)] : null;
-    const upNeighbor = node.row > 0 ? nodes[nodeIndex(node.row - 1, node.col)] : null;
-    const downNeighbor = node.row < ROWS - 1 ? nodes[nodeIndex(node.row + 1, node.col)] : null;
-
-    if (leftNeighbor) {
-      sagAcceleration += -(node.sag - leftNeighbor.sag) * sagStiffness;
-    }
-    if (rightNeighbor) {
-      sagAcceleration += -(node.sag - rightNeighbor.sag) * sagStiffness;
-    }
-    if (upNeighbor) {
-      sagAcceleration += -(node.sag - upNeighbor.sag) * sagCoupling;
-    }
-    if (downNeighbor) {
-      sagAcceleration += -(node.sag - downNeighbor.sag) * sagCoupling;
-    }
-
+    let sagAcceleration = gravity + sagForces[node.index] / mass;
     const anchorBias = node.col / (COLS - 1);
     const targetSag = getColumnSag(node.col, state.stiffnessScale) * (0.5 + anchorBias * 0.9);
     sagAcceleration += -(node.sag - targetSag) * (1.2 + anchorBias * 2.1);
-    sagAcceleration += -node.sagSpeed * sagDamping;
+    sagAcceleration += -(node.sagSpeed * sagDamping) / mass;
     node.sagSpeed += sagAcceleration * dt;
     node.sag += node.sagSpeed * dt;
     node.sag = Math.max(0, node.sag);
@@ -608,7 +627,7 @@ function applyWindDrive(now) {
 
   for (const index of FREE_INDICES) {
     const node = nodes[index];
-    node.speed += getWindDriveValue(now, node);
+    node.speed += getWindDriveValue(now, node) / state.massScale;
   }
 }
 
@@ -657,6 +676,114 @@ function getImpulseSelection(target) {
   return map[target];
 }
 
+function setCutMode(enabled) {
+  state.cutMode = enabled;
+  controls.enabled = !enabled;
+  canvas.style.cursor = enabled ? "crosshair" : "";
+  if (!enabled) {
+    state.hoveredLinkIndex = -1;
+    state.pointerInsideCanvas = false;
+    highlightedLink.visible = false;
+  }
+}
+
+function restoreAllLinks() {
+  links.forEach((link) => {
+    link.cut = false;
+  });
+  state.activeMode = null;
+  state.hoveredLinkIndex = -1;
+  highlightedLink.visible = false;
+  updateModes();
+  updateGeometry();
+  state.statusUntil = performance.now() + 2200;
+  statusBanner.textContent = "Restored all links. The flag mesh and modal coupling are back to the intact lattice.";
+}
+
+function updateHighlightedLink() {
+  const hovered = links[state.hoveredLinkIndex];
+  if (!state.cutMode || !hovered || hovered.cut) {
+    highlightedLink.visible = false;
+    return;
+  }
+
+  highlightedLinkPositions[0].copy(nodes[hovered.a].position).setZ(nodes[hovered.a].position.z + 0.04);
+  highlightedLinkPositions[1].copy(nodes[hovered.b].position).setZ(nodes[hovered.b].position.z + 0.04);
+  highlightedLink.geometry.setFromPoints(highlightedLinkPositions);
+  highlightedLink.visible = true;
+}
+
+function pointToSegmentDistance(pointerX, pointerY, ax, ay, bx, by) {
+  const abx = bx - ax;
+  const aby = by - ay;
+  const lengthSquared = abx * abx + aby * aby;
+  if (lengthSquared < 1e-6) {
+    return Math.hypot(pointerX - ax, pointerY - ay);
+  }
+
+  const t = Math.max(0, Math.min(1, ((pointerX - ax) * abx + (pointerY - ay) * aby) / lengthSquared));
+  const closestX = ax + abx * t;
+  const closestY = ay + aby * t;
+  return Math.hypot(pointerX - closestX, pointerY - closestY);
+}
+
+function updateHoveredLink(clientX, clientY) {
+  if (!state.cutMode || !state.pointerInsideCanvas) {
+    return;
+  }
+
+  const rect = canvas.getBoundingClientRect();
+  const threshold = 10;
+  let closestIndex = -1;
+  let closestDistance = threshold;
+
+  links.forEach((link, index) => {
+    if (link.cut) {
+      return;
+    }
+
+    projectedA.copy(nodes[link.a].position).project(camera);
+    projectedB.copy(nodes[link.b].position).project(camera);
+
+    if (
+      projectedA.z < -1 || projectedA.z > 1 ||
+      projectedB.z < -1 || projectedB.z > 1
+    ) {
+      return;
+    }
+
+    const ax = rect.left + ((projectedA.x + 1) * 0.5) * rect.width;
+    const ay = rect.top + ((-projectedA.y + 1) * 0.5) * rect.height;
+    const bx = rect.left + ((projectedB.x + 1) * 0.5) * rect.width;
+    const by = rect.top + ((-projectedB.y + 1) * 0.5) * rect.height;
+    const distance = pointToSegmentDistance(clientX, clientY, ax, ay, bx, by);
+
+    if (distance < closestDistance) {
+      closestDistance = distance;
+      closestIndex = index;
+    }
+  });
+
+  state.hoveredLinkIndex = closestIndex;
+  updateHighlightedLink();
+}
+
+function cutHoveredLink() {
+  const hovered = links[state.hoveredLinkIndex];
+  if (!state.cutMode || !hovered || hovered.cut) {
+    return;
+  }
+
+  hovered.cut = true;
+  state.hoveredLinkIndex = -1;
+  highlightedLink.visible = false;
+  state.activeMode = null;
+  updateModes();
+  updateGeometry();
+  state.statusUntil = performance.now() + 2400;
+  statusBanner.textContent = `Cut link ${hovered.a}-${hovered.b}. Modal coupling and line rendering updated.`;
+}
+
 function updateGeometry() {
   const surfacePositions = flagGeometry.getAttribute("position");
   const linePositions = edgeGeometry.getAttribute("position");
@@ -673,9 +800,9 @@ function updateGeometry() {
     }
   });
 
-  edges.forEach(([left, right], edgeIndex) => {
-    const a = nodes[left].position;
-    const b = nodes[right].position;
+  links.forEach((link, edgeIndex) => {
+    const a = nodes[link.a].position;
+    const b = link.cut ? a : nodes[link.b].position;
     linePositions.setXYZ(edgeIndex * 2, a.x, a.y, a.z + 0.01);
     linePositions.setXYZ(edgeIndex * 2 + 1, b.x, b.y, b.z + 0.01);
   });
@@ -685,6 +812,7 @@ function updateGeometry() {
   fixedPositions.needsUpdate = true;
   freePositions.needsUpdate = true;
   flagGeometry.computeVertexNormals();
+  updateHighlightedLink();
 }
 
 function updateNodeLabels() {
@@ -859,7 +987,7 @@ function applyImpulse(target, magnitude) {
     const node = nodes[index];
     const rowBias = 1 - Math.abs(node.row - 1) * 0.18;
     const sign = node.row === 1 ? 1 : 0.86;
-    node.speed += magnitude * rowBias * sign;
+    node.speed += (magnitude * rowBias * sign) / state.massScale;
   });
 
   state.lastImpulseTarget = target;
@@ -914,12 +1042,14 @@ function syncGuiState() {
   ui.impulseTarget = state.forceTarget;
   ui.force = state.forceScale;
   ui.stiffness = state.stiffnessScale;
+  ui.mass = state.massScale;
   ui.wind = state.windEnabled;
   ui.windMode = state.windMode;
   ui.render = state.renderMode;
   ui.motion = state.isAnimating;
   ui.tracePaths = state.showTraces;
   ui.modeArrows = state.showArrows;
+  ui.cutMode = state.cutMode;
   guiControllers.forEach((controller) => controller.updateDisplay());
   updateWindDirectionArrow();
 }
@@ -961,9 +1091,29 @@ window.addEventListener("keydown", (event) => {
   if (event.key === "Escape") {
     mathModal.hidden = true;
   }
+  if (event.key === "Escape" && state.cutMode) {
+    setCutMode(false);
+    syncGuiState();
+  }
 });
 
 window.addEventListener("resize", resize);
+canvas.addEventListener("pointermove", (event) => {
+  state.pointerInsideCanvas = true;
+  pointerScreen.set(event.clientX, event.clientY);
+  updateHoveredLink(pointerScreen.x, pointerScreen.y);
+});
+canvas.addEventListener("pointerleave", () => {
+  state.pointerInsideCanvas = false;
+  if (!state.cutMode) {
+    return;
+  }
+  state.hoveredLinkIndex = -1;
+  highlightedLink.visible = false;
+});
+canvas.addEventListener("click", () => {
+  cutHoveredLink();
+});
 
 const gui = new GUI({ title: "Scene Controls" });
 const impulseController = gui.add(ui, "impulseTarget", ["tip", "mid", "global"]).name("Impulse").onChange((value) => {
@@ -1008,6 +1158,14 @@ modeCuesController.domElement.addEventListener("mouseenter", () => {
 modeCuesController.domElement.addEventListener("mouseleave", () => {
   modeInfo.hidden = true;
 });
+const cutModeController = gui.add(ui, "cutMode").name("Cut Mode").onChange((value) => {
+  setCutMode(value);
+  state.statusUntil = performance.now() + 2200;
+  statusBanner.textContent = value
+    ? "Cut Mode enabled. Hover a link to highlight it, then click to cut."
+    : "Cut Mode disabled. Orbit controls restored.";
+});
+const restoreLinksController = gui.add(ui, "restoreLinks").name("Restore Links");
 
 guiControllers.push(
   impulseController,
@@ -1019,6 +1177,12 @@ guiControllers.push(
     updateModes();
     state.statusUntil = performance.now() + 2400;
     statusBanner.textContent = `Raised stiffness to ${state.stiffnessScale.toFixed(1)}x. Higher eigenvalues produce faster, tighter flutter.`;
+  }),
+  gui.add(ui, "mass", 0.5, 2.8, 0.1).name("Mass").onChange((value) => {
+    state.massScale = value;
+    updateModes();
+    state.statusUntil = performance.now() + 2400;
+    statusBanner.textContent = `Set mass to ${state.massScale.toFixed(1)}x. Higher mass adds inertia and lowers the flutter frequencies.`;
   }),
   windController,
   windModeController,
@@ -1033,11 +1197,27 @@ guiControllers.push(
     updateControls();
   }),
   modeCuesController,
+  cutModeController,
 );
 
 gui.add(ui, "applyPulse").name("Apply Pulse");
 gui.add(ui, "resetCalm").name("Reset Calm");
 gui.add(ui, "resetView").name("Reset View");
+
+const cutModeRow = cutModeController.domElement;
+const restoreLinksRow = restoreLinksController.domElement;
+const cutModeWidget = cutModeRow.querySelector(".widget");
+const restoreLinksButton = restoreLinksRow.querySelector("button");
+
+if (cutModeWidget && restoreLinksButton) {
+  restoreLinksButton.textContent = "Restore";
+  restoreLinksButton.style.marginLeft = "0.5rem";
+  restoreLinksButton.style.paddingInline = "0.7rem";
+  cutModeWidget.style.display = "flex";
+  cutModeWidget.style.alignItems = "center";
+  cutModeWidget.appendChild(restoreLinksButton);
+  restoreLinksRow.style.display = "none";
+}
 
 for (let index = 0; index < FREE_INDICES.length; index += 1) {
   const arrow = new THREE.ArrowHelper(
@@ -1055,12 +1235,12 @@ for (let index = 0; index < FREE_INDICES.length; index += 1) {
 
 buildNodeLabels();
 updateModes();
-buildAmplitudeChart();
 renderModalContent();
 updateControls();
 applyRenderMode(state.renderMode);
 resize();
 updateWindDirectionArrow();
+updateGeometry();
 
 let previousTime = performance.now();
 
@@ -1075,6 +1255,9 @@ function animate(now) {
     updateGeometry();
     updateTraces();
     updateAmplitudeUI(now);
+  }
+  if (state.cutMode && state.pointerInsideCanvas) {
+    updateHoveredLink(pointerScreen.x, pointerScreen.y);
   }
 
   controls.update();
