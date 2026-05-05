@@ -120,8 +120,8 @@
 
     #open-math {
       position: fixed;
-      top: 1rem;
-      left: 19rem;
+      right: 1rem;
+      bottom: 1rem;
       z-index: 30;
       width: 3.1rem;
       height: 3.1rem;
@@ -169,6 +169,69 @@
       font-family: inherit;
     }
 
+    #node-labels {
+      position: fixed;
+      inset: 0;
+      z-index: 11;
+      pointer-events: none;
+    }
+
+    .node-label {
+      position: absolute;
+      transform: translate(-50%, -50%);
+      padding: 0.12rem 0.32rem;
+      border: 1px solid rgba(136, 192, 208, 0.18);
+      border-radius: 999px;
+      background: rgba(46, 52, 64, 0.72);
+      color: var(--nord6);
+      font-size: 0.68rem;
+      line-height: 1;
+      white-space: nowrap;
+      box-shadow: 0 6px 16px rgba(0, 0, 0, 0.16);
+    }
+
+    .node-label.fixed {
+      color: var(--nord11);
+      border-color: rgba(191, 97, 106, 0.3);
+    }
+
+    #impulse-info {
+      position: fixed;
+      top: 3.1rem;
+      left: 18.5rem;
+      z-index: 24;
+      width: min(18rem, calc(100vw - 2rem));
+      padding: 0.85rem 0.95rem;
+      border: 1px solid rgba(136, 192, 208, 0.16);
+      border-radius: 1rem;
+      background: rgba(59, 66, 82, 0.84);
+      color: var(--nord5);
+      backdrop-filter: blur(12px);
+      box-shadow: 0 14px 32px rgba(0, 0, 0, 0.2);
+    }
+
+    #impulse-info[hidden] {
+      display: none;
+    }
+
+    #impulse-info h3 {
+      margin-bottom: 0.55rem;
+      color: var(--nord8);
+      font-size: 0.8rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    #impulse-info p {
+      margin: 0.35rem 0;
+      font-size: 0.78rem;
+      line-height: 1.45;
+    }
+
+    #impulse-info code {
+      color: var(--nord14);
+    }
+
     #dashboard {
       position: fixed;
       right: 1rem;
@@ -208,8 +271,20 @@
     }
 
     #status-banner {
+      position: fixed;
+      left: 1rem;
+      bottom: 1rem;
+      z-index: 18;
+      max-width: min(30rem, calc(100vw - 2rem));
+      padding: 0.7rem 0.9rem;
+      border: 1px solid rgba(235, 203, 139, 0.18);
+      border-radius: 0.9rem;
+      background: rgba(59, 66, 82, 0.74);
+      backdrop-filter: blur(10px);
+      box-shadow: 0 12px 30px rgba(0, 0, 0, 0.18);
       color: var(--nord13);
-      min-height: 2.8rem;
+      font-size: 0.82rem;
+      line-height: 1.45;
     }
 
     #mode-gallery {
@@ -353,8 +428,17 @@
 
     @media (max-width: 760px) {
       #open-math {
-        top: 16.2rem;
+        right: 1rem;
+        bottom: 1rem;
+      }
+
+      #impulse-info {
+        top: 20.3rem;
         left: 1rem;
+      }
+
+      #status-banner {
+        max-width: calc(100vw - 2rem);
       }
 
       #dashboard {
@@ -376,6 +460,7 @@
 <body>
   <div id="app">
     <div id="wind-overlay" aria-hidden="true"></div>
+    <div id="node-labels" aria-hidden="true"></div>
     <button
       id="open-math"
       type="button"
@@ -383,17 +468,15 @@
       aria-controls="math-modal"
       aria-label="Explain the math"
     >💡</button>
+    <div id="impulse-info" hidden>
+      <h3>Impulse Mapping</h3>
+      <p><strong>Tip</strong>: pushes the tail column nodes <code>3, 7, 11</code>.</p>
+      <p><strong>Mid</strong>: pushes the middle columns nodes <code>1, 2, 5, 6, 9, 10</code>.</p>
+      <p><strong>Global</strong>: pushes every free node <code>1, 2, 3, 5, 6, 7, 9, 10, 11</code>.</p>
+    </div>
+    <div id="status-banner">Trigger an impulse to compare how localized forcing amplifies higher modes at the flag tail.</div>
 
     <aside id="dashboard" aria-label="Mode explorer">
-      <section class="panel">
-        <h2>Observation</h2>
-        <p id="status-banner">Trigger an impulse to compare how localized forcing amplifies higher modes at the flag tail.</p>
-        <div class="toggle-row">
-          <button id="toggle-traces" class="toggle-chip active" type="button">Trace Paths</button>
-          <button id="toggle-arrows" class="toggle-chip active" type="button">Mode Arrows</button>
-        </div>
-      </section>
-
       <section class="panel">
         <h3>Mode Explorer</h3>
         <div id="mode-gallery"></div>

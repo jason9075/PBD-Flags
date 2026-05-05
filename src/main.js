@@ -3,11 +3,11 @@ import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import GUI from "https://cdn.jsdelivr.net/npm/lil-gui@0.19/+esm";
 
 const canvas = document.getElementById("canvas");
+const nodeLabelsOverlay = document.getElementById("node-labels");
+const impulseInfo = document.getElementById("impulse-info");
 const statusBanner = document.getElementById("status-banner");
 const amplitudeChart = document.getElementById("amplitude-chart");
 const modeGallery = document.getElementById("mode-gallery");
-const toggleTraces = document.getElementById("toggle-traces");
-const toggleArrows = document.getElementById("toggle-arrows");
 const openMathButton = document.getElementById("open-math");
 const closeMathButton = document.getElementById("close-math");
 const languageToggle = document.getElementById("language-toggle");
@@ -19,6 +19,7 @@ const ROWS = 3;
 const NODE_COUNT = COLS * ROWS;
 const REST_X = 1.15;
 const REST_Y = 0.85;
+const FLAG_TOP_Y = 1.55;
 const TRACE_LENGTH = 54;
 const FREE_INDICES = [];
 const FREE_LOOKUP = new Map();
@@ -43,7 +44,7 @@ camera.position.set(0.3, 0.1, 10.8);
 const controls = new OrbitControls(camera, canvas);
 controls.enableDamping = true;
 controls.dampingFactor = 0.08;
-controls.target.set(1.4, -0.55, 0);
+controls.target.set(1.45, 0.45, 0);
 controls.minDistance = 4.5;
 controls.maxDistance = 18;
 controls.maxPolarAngle = Math.PI * 0.92;
@@ -56,6 +57,20 @@ scene.add(keyLight);
 const rimLight = new THREE.DirectionalLight(0x81a1c1, 1.1);
 rimLight.position.set(-2, 1, 4);
 scene.add(rimLight);
+
+const floor = new THREE.Mesh(
+  new THREE.CircleGeometry(10, 48),
+  new THREE.MeshStandardMaterial({
+    color: 0x3b4252,
+    transparent: true,
+    opacity: 0.34,
+    roughness: 0.9,
+    metalness: 0.02,
+  }),
+);
+floor.rotation.x = -Math.PI * 0.5;
+floor.position.set(1.45, -2.55, -0.25);
+scene.add(floor);
 
 const state = {
   isAnimating: true,
@@ -97,13 +112,25 @@ const traceStates = tailIndices.map(() => []);
 const traceLines = [];
 const amplitudeRows = [];
 const arrowHelpers = [];
+const nodeLabelElements = [];
 
 function nodeIndex(row, col) {
   return row * COLS + col;
 }
 
 function createRestPosition(row, col) {
-  return new THREE.Vector3((col - 1.2) * REST_X, (1 - row) * REST_Y, 0);
+  return new THREE.Vector3((col - 1.2) * REST_X, FLAG_TOP_Y - row * REST_Y, 0);
+}
+
+function buildNodeLabels() {
+  nodeLabelsOverlay.innerHTML = "";
+  nodes.forEach((node) => {
+    const label = document.createElement("div");
+    label.className = `node-label${node.fixed ? " fixed" : ""}`;
+    label.textContent = `${node.index}`;
+    nodeLabelsOverlay.appendChild(label);
+    nodeLabelElements.push(label);
+  });
 }
 
 function getColumnSag(col, stiffnessScale) {
@@ -181,7 +208,7 @@ const edgeLines = new THREE.LineSegments(
 scene.add(edgeLines);
 
 const poleGroup = new THREE.Group();
-const poleHeight = 3.5;
+const poleHeight = 4.7;
 const poleRadius = 0.05;
 const poleMesh = new THREE.Mesh(
   new THREE.CylinderGeometry(poleRadius, poleRadius, poleHeight, 20),
@@ -214,7 +241,7 @@ const base = new THREE.Mesh(
     metalness: 0.1,
   }),
 );
-base.position.set(nodes[0].anchor.x, -poleHeight * 0.5 - 0.02, -0.08);
+base.position.set(nodes[0].anchor.x, -poleHeight * 0.5 - 0.01, -0.08);
 poleGroup.add(base);
 scene.add(poleGroup);
 
@@ -589,6 +616,26 @@ function updateGeometry() {
   flagGeometry.computeVertexNormals();
 }
 
+function updateNodeLabels() {
+  const width = window.innerWidth;
+  const height = window.innerHeight;
+
+  nodes.forEach((node, index) => {
+    const label = nodeLabelElements[index];
+    const projected = node.position.clone().project(camera);
+    const isVisible = projected.z >= -1 && projected.z <= 1;
+
+    if (!isVisible) {
+      label.style.display = "none";
+      return;
+    }
+
+    label.style.display = "block";
+    label.style.left = `${((projected.x + 1) * 0.5) * width}px`;
+    label.style.top = `${((-projected.y + 1) * 0.5) * height - 12}px`;
+  });
+}
+
 function updateTraces() {
   traceLines.forEach((line, traceIndex) => {
     const history = traceStates[traceIndex];
@@ -716,7 +763,7 @@ function resetCalmState() {
 
 function resetView() {
   camera.position.set(0.3, 0.1, 10.8);
-  controls.target.set(1.4, -0.55, 0);
+  controls.target.set(1.45, 0.45, 0);
   controls.update();
 }
 
@@ -734,8 +781,6 @@ function syncGuiState() {
 }
 
 function updateControls() {
-  toggleTraces.classList.toggle("active", state.showTraces);
-  toggleArrows.classList.toggle("active", state.showArrows);
   syncGuiState();
 }
 
@@ -746,16 +791,6 @@ function resize() {
   camera.aspect = width / height;
   camera.updateProjectionMatrix();
 }
-
-toggleTraces.addEventListener("click", () => {
-  state.showTraces = !state.showTraces;
-  updateControls();
-});
-
-toggleArrows.addEventListener("click", () => {
-  state.showArrows = !state.showArrows;
-  updateControls();
-});
 
 openMathButton.addEventListener("click", () => {
   renderModalContent();
@@ -786,10 +821,21 @@ window.addEventListener("keydown", (event) => {
 window.addEventListener("resize", resize);
 
 const gui = new GUI({ title: "Scene Controls" });
+const impulseController = gui.add(ui, "impulseTarget", ["tip", "mid", "global"]).name("Impulse").onChange((value) => {
+  state.forceTarget = value;
+});
+const impulseLabel = impulseController.domElement.querySelector(".name");
+if (impulseLabel) {
+  impulseController.domElement.addEventListener("mouseenter", () => {
+    impulseInfo.hidden = false;
+  });
+  impulseController.domElement.addEventListener("mouseleave", () => {
+    impulseInfo.hidden = true;
+  });
+}
+
 guiControllers.push(
-  gui.add(ui, "impulseTarget", ["tip", "mid", "global"]).name("Impulse").onChange((value) => {
-    state.forceTarget = value;
-  }),
+  impulseController,
   gui.add(ui, "force", 0.3, 3.2, 0.1).name("Force").onChange((value) => {
     state.forceScale = value;
   }),
@@ -846,6 +892,7 @@ for (let index = 0; index < FREE_INDICES.length; index += 1) {
   scene.add(arrow);
 }
 
+buildNodeLabels();
 updateModes();
 buildAmplitudeChart();
 renderModalContent();
@@ -869,6 +916,7 @@ function animate(now) {
   }
 
   controls.update();
+  updateNodeLabels();
   renderer.render(scene, camera);
 }
 
