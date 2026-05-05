@@ -23,6 +23,7 @@ const REST_X = 1.15;
 const REST_Y = 0.85;
 const FLAG_TOP_Y = 1.55;
 const TRACE_LENGTH = 54;
+const WIND_DISPLACEMENT_DIRECTION = new THREE.Vector3(1, 0, -0.12).normalize();
 const FREE_INDICES = [];
 const FREE_LOOKUP = new Map();
 
@@ -591,18 +592,43 @@ function applyWindDrive(now) {
 
   for (const index of FREE_INDICES) {
     const node = nodes[index];
-    const phase = now * 0.0018 + node.col * 0.85 + node.row * 0.4;
-    if (state.windMode === "pulse") {
-      const carrier = Math.sin(phase * 0.72);
-      const burst = Math.max(0, Math.sin(now * 0.006 + node.col * 0.7));
-      const pulse = Math.sign(carrier) * burst * burst * 0.013 * state.forceScale;
-      node.speed += pulse;
-    } else {
-      const pulse = Math.sin(phase) * 0.006 * state.forceScale;
-      const gust = Math.max(0, Math.sin(phase * 0.47 + 1.2)) * 0.0045 * state.forceScale;
-      node.speed += pulse + gust;
-    }
+    node.speed += getWindDriveValue(now, node);
   }
+}
+
+function getWindDriveValue(now, node) {
+  const phase = now * 0.0018 + node.col * 0.85 + node.row * 0.4;
+
+  if (state.windMode === "pulse") {
+    const burst = Math.max(0, Math.sin(now * 0.006 + node.col * 0.7));
+    const ripple = 0.0018 * (0.5 + 0.5 * Math.sin(phase * 0.72));
+    return (burst * burst * 0.013 + ripple) * state.forceScale;
+  }
+
+  const baseFlow = 0.0042;
+  const ripple = 0.0016 * (0.5 + 0.5 * Math.sin(phase));
+  const gust = 0.0045 * Math.max(0, Math.sin(phase * 0.47 + 1.2));
+  return (baseFlow + ripple + gust) * state.forceScale;
+}
+
+function getWindArrowState(now) {
+  if (!state.windEnabled) {
+    return {
+      direction: WIND_DISPLACEMENT_DIRECTION.clone(),
+      length: 0,
+    };
+  }
+
+  let totalDrive = 0;
+  for (const index of FREE_INDICES) {
+    totalDrive += getWindDriveValue(now, nodes[index]);
+  }
+
+  const averageDrive = totalDrive / FREE_INDICES.length;
+  const direction = WIND_DISPLACEMENT_DIRECTION.clone();
+  const length = 1.35 + Math.min(averageDrive / 0.013, 1) * 1.1;
+
+  return { direction, length };
 }
 
 function updateGeometry() {
@@ -758,19 +784,7 @@ function updateModeArrows(dominantIndex, dominantValue) {
 function updateWindDirectionArrow(now = performance.now()) {
   const topLeft = nodes[nodeIndex(0, 0)].position;
   const origin = new THREE.Vector3(topLeft.x + 0.15, poleHeight * 0.5 + 0.09, 0);
-  let direction = new THREE.Vector3(1, 0, 0);
-  let length = 1.8;
-
-  if (state.windMode === "pulse") {
-    const gust = Math.max(0, Math.sin(now * 0.006));
-    const tilt = Math.sin(now * 0.004) * 0.18;
-    direction = new THREE.Vector3(1, tilt, 0).normalize();
-    length = 1.55 + gust * 0.9;
-  } else {
-    const sway = Math.sin(now * 0.0018) * 0.04;
-    direction = new THREE.Vector3(1, sway, 0).normalize();
-    length = 1.75 + Math.max(0, Math.sin(now * 0.0012 + 0.8)) * 0.18;
-  }
+  const { direction, length } = getWindArrowState(now);
 
   windArrowDirection.copy(direction);
   windDirectionArrow.position.copy(origin);
