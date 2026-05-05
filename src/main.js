@@ -5,6 +5,7 @@ import GUI from "https://cdn.jsdelivr.net/npm/lil-gui@0.19/+esm";
 const canvas = document.getElementById("canvas");
 const nodeLabelsOverlay = document.getElementById("node-labels");
 const impulseInfo = document.getElementById("impulse-info");
+const windInfo = document.getElementById("wind-info");
 const statusBanner = document.getElementById("status-banner");
 const amplitudeChart = document.getElementById("amplitude-chart");
 const modeGallery = document.getElementById("mode-gallery");
@@ -122,6 +123,7 @@ const windDirectionArrow = new THREE.ArrowHelper(
   0.24,
   0.14,
 );
+const windArrowDirection = new THREE.Vector3(1, 0, 0);
 windDirectionArrow.visible = false;
 scene.add(windDirectionArrow);
 
@@ -673,9 +675,12 @@ function updateWindLabel() {
     return;
   }
 
+  const anchor = windDirectionArrow.position.clone().add(windArrowDirection.clone().multiplyScalar(0.55));
+  const labelProjected = anchor.project(camera);
+
   windLabel.hidden = false;
-  windLabel.style.left = `${((projected.x + 1) * 0.5) * width}px`;
-  windLabel.style.top = `${((-projected.y + 1) * 0.5) * height - 18}px`;
+  windLabel.style.left = `${((labelProjected.x + 1) * 0.5) * width}px`;
+  windLabel.style.top = `${((-labelProjected.y + 1) * 0.5) * height - 18}px`;
 }
 
 function updateTraces() {
@@ -750,12 +755,24 @@ function updateModeArrows(dominantIndex, dominantValue) {
   });
 }
 
-function updateWindDirectionArrow() {
+function updateWindDirectionArrow(now = performance.now()) {
   const topLeft = nodes[nodeIndex(0, 0)].position;
   const origin = new THREE.Vector3(topLeft.x + 0.15, poleHeight * 0.5 + 0.09, 0);
-  const direction = new THREE.Vector3(1, 0, 0);
-  const length = state.windMode === "pulse" ? 2.1 : 1.8;
+  let direction = new THREE.Vector3(1, 0, 0);
+  let length = 1.8;
 
+  if (state.windMode === "pulse") {
+    const gust = Math.max(0, Math.sin(now * 0.006));
+    const tilt = Math.sin(now * 0.004) * 0.18;
+    direction = new THREE.Vector3(1, tilt, 0).normalize();
+    length = 1.55 + gust * 0.9;
+  } else {
+    const sway = Math.sin(now * 0.0018) * 0.04;
+    direction = new THREE.Vector3(1, sway, 0).normalize();
+    length = 1.75 + Math.max(0, Math.sin(now * 0.0012 + 0.8)) * 0.18;
+  }
+
+  windArrowDirection.copy(direction);
   windDirectionArrow.position.copy(origin);
   windDirectionArrow.setDirection(direction);
   windDirectionArrow.setLength(length, 0.24, 0.14);
@@ -880,15 +897,34 @@ const gui = new GUI({ title: "Scene Controls" });
 const impulseController = gui.add(ui, "impulseTarget", ["tip", "mid", "global"]).name("Impulse").onChange((value) => {
   state.forceTarget = value;
 });
-const impulseLabel = impulseController.domElement.querySelector(".name");
-if (impulseLabel) {
-  impulseController.domElement.addEventListener("mouseenter", () => {
-    impulseInfo.hidden = false;
-  });
-  impulseController.domElement.addEventListener("mouseleave", () => {
-    impulseInfo.hidden = true;
-  });
-}
+impulseController.domElement.addEventListener("mouseenter", () => {
+  impulseInfo.hidden = false;
+});
+impulseController.domElement.addEventListener("mouseleave", () => {
+  impulseInfo.hidden = true;
+});
+
+const windController = gui.add(ui, "wind").name("Wind").onChange((value) => {
+  state.windEnabled = value;
+  state.statusUntil = performance.now() + 2200;
+  statusBanner.textContent = state.windEnabled
+    ? `Wind drive enabled in ${state.windMode} mode.`
+    : "Wind disabled. The tail should settle into a gravity-dominated droop.";
+});
+
+const windModeController = gui.add(ui, "windMode", ["steady", "pulse"]).name("Wind Mode").onChange((value) => {
+  state.windMode = value;
+  state.statusUntil = performance.now() + 2200;
+  statusBanner.textContent = state.windMode === "pulse"
+    ? "Wind mode set to pulse. When wind is on, the flag receives rhythmic gust bursts."
+    : "Wind mode set to steady. When wind is on, the flag receives a continuous breeze.";
+});
+windModeController.domElement.addEventListener("mouseenter", () => {
+  windInfo.hidden = false;
+});
+windModeController.domElement.addEventListener("mouseleave", () => {
+  windInfo.hidden = true;
+});
 
 guiControllers.push(
   impulseController,
@@ -901,20 +937,8 @@ guiControllers.push(
     state.statusUntil = performance.now() + 2400;
     statusBanner.textContent = `Raised stiffness to ${state.stiffnessScale.toFixed(1)}x. Higher eigenvalues produce faster, tighter flutter.`;
   }),
-  gui.add(ui, "wind").name("Wind").onChange((value) => {
-    state.windEnabled = value;
-    state.statusUntil = performance.now() + 2200;
-    statusBanner.textContent = state.windEnabled
-      ? `Wind drive enabled in ${state.windMode} mode.`
-      : "Wind disabled. The tail should settle into a gravity-dominated droop.";
-  }),
-  gui.add(ui, "windMode", ["steady", "pulse"]).name("Wind Mode").onChange((value) => {
-    state.windMode = value;
-    state.statusUntil = performance.now() + 2200;
-    statusBanner.textContent = state.windMode === "pulse"
-      ? "Wind mode set to pulse. When wind is on, the flag receives rhythmic gust bursts."
-      : "Wind mode set to steady. When wind is on, the flag receives a continuous breeze.";
-  }),
+  windController,
+  windModeController,
   gui.add(ui, "render", ["solid", "wireframe"]).name("Render").onChange((value) => {
     applyRenderMode(value);
   }),
@@ -930,6 +954,7 @@ guiControllers.push(
     updateControls();
   }),
 );
+
 gui.add(ui, "applyPulse").name("Apply Pulse");
 gui.add(ui, "resetCalm").name("Reset Calm");
 gui.add(ui, "resetView").name("Reset View");
@@ -973,7 +998,7 @@ function animate(now) {
   }
 
   controls.update();
-  updateWindDirectionArrow();
+  updateWindDirectionArrow(now);
   updateNodeLabels();
   updateWindLabel();
   renderer.render(scene, camera);

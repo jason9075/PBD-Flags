@@ -248,6 +248,43 @@
       color: var(--nord14);
     }
 
+    #wind-info {
+      position: fixed;
+      top: 9.8rem;
+      left: 18.5rem;
+      z-index: 24;
+      width: min(22rem, calc(100vw - 2rem));
+      padding: 0.85rem 0.95rem;
+      border: 1px solid rgba(136, 192, 208, 0.16);
+      border-radius: 1rem;
+      background: rgba(59, 66, 82, 0.84);
+      color: var(--nord5);
+      backdrop-filter: blur(12px);
+      box-shadow: 0 14px 32px rgba(0, 0, 0, 0.2);
+    }
+
+    #wind-info[hidden] {
+      display: none;
+    }
+
+    #wind-info h3 {
+      margin-bottom: 0.55rem;
+      color: var(--nord8);
+      font-size: 0.8rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    #wind-info p {
+      margin: 0.35rem 0;
+      font-size: 0.78rem;
+      line-height: 1.45;
+    }
+
+    #wind-info code {
+      color: var(--nord14);
+    }
+
     #dashboard {
       position: fixed;
       right: 1rem;
@@ -453,6 +490,11 @@
         left: 1rem;
       }
 
+      #wind-info {
+        top: 28.8rem;
+        left: 1rem;
+      }
+
       #status-banner {
         max-width: calc(100vw - 2rem);
       }
@@ -489,6 +531,14 @@
       <p><strong>Tip</strong>: pushes the tail column nodes <code>3, 7, 11</code>.</p>
       <p><strong>Mid</strong>: pushes the middle columns nodes <code>1, 2, 5, 6, 9, 10</code>.</p>
       <p><strong>Global</strong>: pushes every free node <code>1, 2, 3, 5, 6, 7, 9, 10, 11</code>.</p>
+    </div>
+    <div id="wind-info" hidden>
+      <h3>Wind Logic</h3>
+      <p><strong>Continuous drive</strong>: with wind enabled, every free node receives velocity input every frame.</p>
+      <p><strong>Not random</strong>: the current wind uses deterministic sine-based functions with row/column phase offsets, so it looks varied without using noise.</p>
+      <p><strong>Steady</strong>: combines a smooth sinusoidal term with a positive gust envelope for a continuous breeze.</p>
+      <p><strong>Pulse</strong>: uses burst-shaped rhythmic gusts, so the flag is driven in repeated packets rather than a smooth stream.</p>
+      <p><strong>Direction</strong>: force is applied into the current vibration degree of freedom, not a full 3D wind vector field.</p>
     </div>
     <div id="status-banner">Trigger an impulse to compare how localized forcing amplifies higher modes at the flag tail.</div>
 
