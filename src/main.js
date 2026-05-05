@@ -229,7 +229,7 @@ for (let row = 0; row < ROWS; row += 1) {
       links.push({
         a: current,
         b: down,
-        weight: 0.75,
+        weight: 1,
         axis: "vertical",
         cut: false,
       });
@@ -553,10 +553,8 @@ function updateNodeMotion(dt) {
   const damping = 2.5;
   const gravity = 2.4;
   const mass = state.massScale;
-  const stiffnessScale = state.stiffnessScale * 7.8;
-  const coupling = state.stiffnessScale * 3.4;
+  const displacementStiffness = state.stiffnessScale * 7.8;
   const sagStiffness = state.stiffnessScale * 5.4;
-  const sagCoupling = state.stiffnessScale * 2.6;
   const sagDamping = 3.8;
   const displacementForces = Array(nodes.length).fill(0);
   const sagForces = Array(nodes.length).fill(0);
@@ -568,8 +566,8 @@ function updateNodeMotion(dt) {
 
     const left = nodes[link.a];
     const right = nodes[link.b];
-    const displacementK = (link.axis === "horizontal" ? stiffnessScale : coupling) * link.weight;
-    const sagK = (link.axis === "horizontal" ? sagStiffness : sagCoupling) * link.weight;
+    const displacementK = displacementStiffness * link.weight;
+    const sagK = sagStiffness * link.weight;
     const displacementDelta = left.displacement - right.displacement;
     const sagDelta = left.sag - right.sag;
 
