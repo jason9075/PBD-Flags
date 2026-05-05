@@ -322,6 +322,43 @@
       color: var(--nord14);
     }
 
+    #mode-explorer-info {
+      position: fixed;
+      top: 18.8rem;
+      right: calc(min(var(--side-panel-width), calc(100vw - 2rem)) + 2rem);
+      z-index: 24;
+      width: min(20rem, calc(100vw - 2rem));
+      padding: 0.85rem 0.95rem;
+      border: 1px solid rgba(136, 192, 208, 0.16);
+      border-radius: 1rem;
+      background: rgba(59, 66, 82, 0.84);
+      color: var(--nord5);
+      backdrop-filter: blur(12px);
+      box-shadow: 0 14px 32px rgba(0, 0, 0, 0.2);
+    }
+
+    #mode-explorer-info[hidden] {
+      display: none;
+    }
+
+    #mode-explorer-info h3 {
+      margin-bottom: 0.55rem;
+      color: var(--nord8);
+      font-size: 0.8rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    #mode-explorer-info p {
+      margin: 0.35rem 0;
+      font-size: 0.78rem;
+      line-height: 1.45;
+    }
+
+    #mode-explorer-title {
+      cursor: help;
+    }
+
     #dashboard {
       position: fixed;
       right: 1rem;
@@ -583,11 +620,17 @@
       <p><strong>How they are built</strong>: each cue uses a fixed forward bias plus the dominant mode coefficient, so it is best read as sign and relative strength.</p>
       <p><strong>Use it for</strong>: spotting which regions participate more strongly in the active mode after an impulse or wind burst.</p>
     </div>
+    <div id="mode-explorer-info" hidden>
+      <h3>Mode Explorer</h3>
+      <p><strong>Mode buttons</strong>: <code>v1</code>, <code>v2</code>, ... each inject one eigenmode directly so you can isolate that deformation family.</p>
+      <p><strong>Live Modal Amplitudes</strong>: the bars show the current projection onto each mode, which helps compare which responses dominate after wind or pulse input.</p>
+      <p><strong>How to read it</strong>: combine this panel with <code>Impulse</code>, <code>Stiffness</code>, and <code>Mass</code> to see how forcing location and system parameters reshape the mode mix.</p>
+    </div>
     <div id="status-banner">Trigger an impulse to compare how localized forcing amplifies higher modes at the flag tail.</div>
 
     <aside id="dashboard" aria-label="Mode explorer">
       <section class="panel">
-        <h3>Mode Explorer</h3>
+        <h3 id="mode-explorer-title">Mode Explorer</h3>
         <div id="mode-gallery"></div>
       </section>
 

@@ -7,6 +7,7 @@ const nodeLabelsOverlay = document.getElementById("node-labels");
 const impulseInfo = document.getElementById("impulse-info");
 const windInfo = document.getElementById("wind-info");
 const modeInfo = document.getElementById("mode-info");
+const explorerInfo = document.getElementById("mode-explorer-info");
 const statusBanner = document.getElementById("status-banner");
 const amplitudeChart = document.getElementById("amplitude-chart");
 const modeGallery = document.getElementById("mode-gallery");
@@ -22,7 +23,10 @@ const ROWS = 3;
 const NODE_COUNT = COLS * ROWS;
 const REST_X = 1.15;
 const REST_Y = 0.85;
-const FLAG_TOP_Y = 1.55;
+const poleHeight = 6.7;
+const poleRadius = 0.05;
+const FLAG_TOP_OFFSET = 0.1;
+const FLAG_TOP_Y = poleHeight * 0.5 - FLAG_TOP_OFFSET;
 const TRACE_LENGTH = 54;
 const DISPLACEMENT_DIRECTION = new THREE.Vector3(0.12, 0, 1).normalize();
 const WIND_DISPLACEMENT_DIRECTION = new THREE.Vector3(1, 0, -0.12).normalize();
@@ -273,8 +277,6 @@ highlightedLink.visible = false;
 scene.add(highlightedLink);
 
 const poleGroup = new THREE.Group();
-const poleHeight = 4.7;
-const poleRadius = 0.05;
 const poleMesh = new THREE.Mesh(
   new THREE.CylinderGeometry(poleRadius, poleRadius, poleHeight, 20),
   new THREE.MeshStandardMaterial({
@@ -463,11 +465,6 @@ function updateModes() {
   buildAmplitudeChart();
 }
 
-function getModeLabel(index) {
-  const style = ["Drift", "Arc", "S-Wave", "Ripple", "Bend", "Fan", "Twist", "Edge", "Flutter"];
-  return style[index] || "Mode";
-}
-
 function buildModeGallery() {
   modeGallery.innerHTML = "";
   modes.forEach((mode, index) => {
@@ -477,7 +474,7 @@ function buildModeGallery() {
     if (state.activeMode === index) {
       button.classList.add("active");
     }
-    button.innerHTML = `<strong>v${index + 1}</strong><span>${getModeLabel(index)}</span>`;
+    button.innerHTML = `<strong>v${index + 1}</strong>`;
     button.addEventListener("click", () => exciteMode(index));
     modeGallery.appendChild(button);
   });
@@ -1172,7 +1169,7 @@ guiControllers.push(
   gui.add(ui, "force", 0.3, 3.2, 0.1).name("Force").onChange((value) => {
     state.forceScale = value;
   }),
-  gui.add(ui, "stiffness", 0.7, 2.6, 0.1).name("Stiffness").onChange((value) => {
+  gui.add(ui, "stiffness", 0.1, 2.6, 0.1).name("Stiffness").onChange((value) => {
     state.stiffnessScale = value;
     updateModes();
     state.statusUntil = performance.now() + 2400;
@@ -1208,6 +1205,7 @@ const cutModeRow = cutModeController.domElement;
 const restoreLinksRow = restoreLinksController.domElement;
 const cutModeWidget = cutModeRow.querySelector(".widget");
 const restoreLinksButton = restoreLinksRow.querySelector("button");
+const modeExplorerTitle = document.getElementById("mode-explorer-title");
 
 if (cutModeWidget && restoreLinksButton) {
   restoreLinksButton.textContent = "Restore";
@@ -1217,6 +1215,15 @@ if (cutModeWidget && restoreLinksButton) {
   cutModeWidget.style.alignItems = "center";
   cutModeWidget.appendChild(restoreLinksButton);
   restoreLinksRow.style.display = "none";
+}
+
+if (modeExplorerTitle && explorerInfo) {
+  modeExplorerTitle.addEventListener("mouseenter", () => {
+    explorerInfo.hidden = false;
+  });
+  modeExplorerTitle.addEventListener("mouseleave", () => {
+    explorerInfo.hidden = true;
+  });
 }
 
 for (let index = 0; index < FREE_INDICES.length; index += 1) {
