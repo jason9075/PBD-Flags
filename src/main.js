@@ -90,6 +90,7 @@ const state = {
   massScale: 1,
   windEnabled: false,
   windMode: "steady",
+  reverseWind: false,
   renderMode: "solid",
   showTraces: true,
   showArrows: true,
@@ -109,6 +110,7 @@ const ui = {
   mass: state.massScale,
   wind: state.windEnabled,
   windMode: state.windMode,
+  reverseWind: state.reverseWind,
   render: state.renderMode,
   motion: state.isAnimating,
   tracePaths: state.showTraces,
@@ -628,17 +630,18 @@ function applyWindDrive(now) {
 
 function getWindDriveValue(now, node) {
   const phase = now * 0.0018 + node.col * 0.85 + node.row * 0.4;
+  const directionSign = state.reverseWind ? -1 : 1;
 
   if (state.windMode === "pulse") {
     const burst = Math.max(0, Math.sin(now * 0.006 + node.col * 0.7));
     const ripple = 0.0018 * (0.5 + 0.5 * Math.sin(phase * 0.72));
-    return (burst * burst * 0.013 + ripple) * state.forceScale;
+    return directionSign * (burst * burst * 0.013 + ripple) * state.forceScale;
   }
 
   const baseFlow = 0.0042;
   const ripple = 0.0016 * (0.5 + 0.5 * Math.sin(phase));
   const gust = 0.0045 * Math.max(0, Math.sin(phase * 0.47 + 1.2));
-  return (baseFlow + ripple + gust) * state.forceScale;
+  return directionSign * (baseFlow + ripple + gust) * state.forceScale;
 }
 
 function getWindArrowState(now) {
@@ -655,8 +658,8 @@ function getWindArrowState(now) {
   }
 
   const averageDrive = totalDrive / FREE_INDICES.length;
-  const direction = WIND_DISPLACEMENT_DIRECTION.clone();
-  const length = 1.35 + Math.min(averageDrive / 0.013, 1) * 1.1;
+  const direction = WIND_DISPLACEMENT_DIRECTION.clone().multiplyScalar(Math.sign(averageDrive) || 1);
+  const length = 1.35 + Math.min(Math.abs(averageDrive) / 0.013, 1) * 1.1;
 
   return { direction, length };
 }
@@ -1040,6 +1043,7 @@ function syncGuiState() {
   ui.mass = state.massScale;
   ui.wind = state.windEnabled;
   ui.windMode = state.windMode;
+  ui.reverseWind = state.reverseWind;
   ui.render = state.renderMode;
   ui.motion = state.isAnimating;
   ui.tracePaths = state.showTraces;
@@ -1136,6 +1140,14 @@ const windModeController = gui.add(ui, "windMode", ["steady", "pulse"]).name("Wi
     ? "Wind mode set to pulse. When wind is on, the flag receives rhythmic gust bursts."
     : "Wind mode set to steady. When wind is on, the flag receives a continuous breeze.";
 });
+const reverseWindController = gui.add(ui, "reverseWind").name("Reverse Wind").onChange((value) => {
+  state.reverseWind = value;
+  updateWindDirectionArrow();
+  state.statusUntil = performance.now() + 2200;
+  statusBanner.textContent = value
+    ? "Reverse wind enabled. Wind drive and the arrow now point in the opposite direction."
+    : "Reverse wind disabled. Wind drive returned to the default direction.";
+});
 windModeController.domElement.addEventListener("mouseenter", () => {
   windInfo.hidden = false;
 });
@@ -1164,7 +1176,7 @@ const restoreLinksController = gui.add(ui, "restoreLinks").name("Restore Links")
 
 guiControllers.push(
   impulseController,
-  gui.add(ui, "force", 0.3, 3.2, 0.1).name("Force").onChange((value) => {
+  gui.add(ui, "force", 0.3, 10, 0.1).name("Force").onChange((value) => {
     state.forceScale = value;
   }),
   gui.add(ui, "stiffness", 0.1, 2.6, 0.1).name("Stiffness").onChange((value) => {
@@ -1181,6 +1193,7 @@ guiControllers.push(
   }),
   windController,
   windModeController,
+  reverseWindController,
   gui.add(ui, "render", ["solid", "wireframe"]).name("Render").onChange((value) => {
     applyRenderMode(value);
   }),
