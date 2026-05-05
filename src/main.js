@@ -13,6 +13,7 @@ const closeMathButton = document.getElementById("close-math");
 const languageToggle = document.getElementById("language-toggle");
 const mathModal = document.getElementById("math-modal");
 const mathContent = document.getElementById("math-content");
+let windLabel = null;
 
 const COLS = 4;
 const ROWS = 3;
@@ -113,6 +114,16 @@ const traceLines = [];
 const amplitudeRows = [];
 const arrowHelpers = [];
 const nodeLabelElements = [];
+const windDirectionArrow = new THREE.ArrowHelper(
+  new THREE.Vector3(1, 0, 0),
+  new THREE.Vector3(0, 0, 0),
+  1.8,
+  0x88c0d0,
+  0.24,
+  0.14,
+);
+windDirectionArrow.visible = false;
+scene.add(windDirectionArrow);
 
 function nodeIndex(row, col) {
   return row * COLS + col;
@@ -124,6 +135,12 @@ function createRestPosition(row, col) {
 
 function buildNodeLabels() {
   nodeLabelsOverlay.innerHTML = "";
+  windLabel = document.createElement("div");
+  windLabel.id = "wind-label";
+  windLabel.className = "wind-label";
+  windLabel.hidden = true;
+  windLabel.textContent = "Wind";
+  nodeLabelsOverlay.appendChild(windLabel);
   nodes.forEach((node) => {
     const label = document.createElement("div");
     label.className = `node-label${node.fixed ? " fixed" : ""}`;
@@ -636,6 +653,31 @@ function updateNodeLabels() {
   });
 }
 
+function updateWindLabel() {
+  if (!windLabel) {
+    return;
+  }
+
+  if (!state.windEnabled) {
+    windLabel.hidden = true;
+    return;
+  }
+
+  const width = window.innerWidth;
+  const height = window.innerHeight;
+  const projected = windDirectionArrow.position.clone().project(camera);
+  const isVisible = projected.z >= -1 && projected.z <= 1;
+
+  if (!isVisible) {
+    windLabel.hidden = true;
+    return;
+  }
+
+  windLabel.hidden = false;
+  windLabel.style.left = `${((projected.x + 1) * 0.5) * width}px`;
+  windLabel.style.top = `${((-projected.y + 1) * 0.5) * height - 18}px`;
+}
+
 function updateTraces() {
   traceLines.forEach((line, traceIndex) => {
     const history = traceStates[traceIndex];
@@ -708,6 +750,18 @@ function updateModeArrows(dominantIndex, dominantValue) {
   });
 }
 
+function updateWindDirectionArrow() {
+  const topLeft = nodes[nodeIndex(0, 0)].position;
+  const origin = new THREE.Vector3(topLeft.x + 0.15, poleHeight * 0.5 + 0.09, 0);
+  const direction = new THREE.Vector3(1, 0, 0);
+  const length = state.windMode === "pulse" ? 2.1 : 1.8;
+
+  windDirectionArrow.position.copy(origin);
+  windDirectionArrow.setDirection(direction);
+  windDirectionArrow.setLength(length, 0.24, 0.14);
+  windDirectionArrow.visible = state.windEnabled;
+}
+
 function applyImpulse(target, magnitude) {
   const map = {
     tip: FREE_INDICES.filter((index) => nodes[index].col === COLS - 1),
@@ -778,6 +832,7 @@ function syncGuiState() {
   ui.tracePaths = state.showTraces;
   ui.modeArrows = state.showArrows;
   guiControllers.forEach((controller) => controller.updateDisplay());
+  updateWindDirectionArrow();
 }
 
 function updateControls() {
@@ -790,6 +845,7 @@ function resize() {
   renderer.setSize(width, height);
   camera.aspect = width / height;
   camera.updateProjectionMatrix();
+  updateWindDirectionArrow();
 }
 
 openMathButton.addEventListener("click", () => {
@@ -899,6 +955,7 @@ renderModalContent();
 updateControls();
 applyRenderMode(state.renderMode);
 resize();
+updateWindDirectionArrow();
 
 let previousTime = performance.now();
 
@@ -916,7 +973,9 @@ function animate(now) {
   }
 
   controls.update();
+  updateWindDirectionArrow();
   updateNodeLabels();
+  updateWindLabel();
   renderer.render(scene, camera);
 }
 
