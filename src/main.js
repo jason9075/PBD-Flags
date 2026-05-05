@@ -31,6 +31,7 @@ const POLE_X = -1.2 * REST_X;
 const TRACE_LENGTH = 54;
 const DISPLACEMENT_DIRECTION = new THREE.Vector3(0.12, 0, 1).normalize();
 const WIND_DISPLACEMENT_DIRECTION = new THREE.Vector3(1, 0, -0.12).normalize();
+const WIND_ACCELERATION_SCALE = 18;
 const FREE_INDICES = [];
 const FREE_LOOKUP = new Map();
 
@@ -208,7 +209,8 @@ for (let row = 0; row < ROWS; row += 1) {
       fixed,
       anchor,
       position: anchor.clone(),
-      velocity: new THREE.Vector3(),
+      previousPosition: anchor.clone(),
+      acceleration: new THREE.Vector3(),
       displacement: 0,
     });
   }
@@ -592,18 +594,24 @@ function updateNodeMotion(dt) {
   const stretchStiffness = Math.min(0.34 + state.stiffnessScale * 0.2, 0.92);
   const constraintIterations = 7;
   const displacementDirection = rotateDirectionByAnchor(DISPLACEMENT_DIRECTION);
-  const previousPositions = nodes.map((node) => node.position.clone());
+  const dtSquared = dt * dt;
 
   for (const node of nodes) {
     if (node.fixed) {
       node.position.copy(node.anchor);
-      node.velocity.set(0, 0, 0);
+      node.previousPosition.copy(node.anchor);
+      node.acceleration.set(0, 0, 0);
       continue;
     }
 
-    node.velocity.addScaledVector(gravity, dt);
-    node.velocity.multiplyScalar(damping);
-    node.position.addScaledVector(node.velocity, dt);
+    node.acceleration.add(gravity);
+    node.acceleration.multiplyScalar(1 / state.massScale);
+
+    const currentPosition = node.position.clone();
+    const verletStep = node.position.clone().sub(node.previousPosition).multiplyScalar(damping);
+    node.position.add(verletStep).addScaledVector(node.acceleration, dtSquared);
+    node.previousPosition.copy(currentPosition);
+    node.acceleration.set(0, 0, 0);
   }
 
   for (let iteration = 0; iteration < constraintIterations; iteration += 1) {
@@ -643,14 +651,17 @@ function updateNodeMotion(dt) {
   for (const node of nodes) {
     if (node.fixed) {
       node.position.copy(node.anchor);
-      node.velocity.set(0, 0, 0);
+      node.previousPosition.copy(node.anchor);
       node.displacement = 0;
       continue;
     }
 
-    node.velocity.copy(node.position).sub(previousPositions[node.index]).multiplyScalar(1 / Math.max(dt, 1e-4));
     node.displacement = node.position.clone().sub(node.anchor).dot(displacementDirection);
   }
+}
+
+function addVelocityImpulse(node, direction, magnitude, dt = 1 / 60) {
+  node.previousPosition.addScaledVector(direction, -magnitude * dt);
 }
 
 function applyWindDrive(now) {
@@ -661,7 +672,7 @@ function applyWindDrive(now) {
   for (const index of FREE_INDICES) {
     const node = nodes[index];
     const windDirection = getWindDirection(now, node);
-    node.velocity.addScaledVector(windDirection, getWindDriveValue(now, node) / state.massScale);
+    node.acceleration.addScaledVector(windDirection, getWindDriveValue(now, node) * WIND_ACCELERATION_SCALE);
   }
 }
 
@@ -1042,7 +1053,7 @@ function applyImpulse(target, magnitude) {
     const node = nodes[index];
     const rowBias = 1 - Math.abs(node.row - 1) * 0.18;
     const sign = node.row === 1 ? 1 : 0.86;
-    node.velocity.addScaledVector(impulseDirection, (magnitude * rowBias * sign) / state.massScale);
+    addVelocityImpulse(node, impulseDirection, (magnitude * rowBias * sign) / state.massScale);
   });
 
   state.lastImpulseTarget = target;
@@ -1059,7 +1070,7 @@ function exciteMode(modeIndex) {
   const scale = state.forceScale * 0.62;
   const modeDirection = rotateDirectionByAnchor(DISPLACEMENT_DIRECTION);
   FREE_INDICES.forEach((nodeId, vectorIndex) => {
-    nodes[nodeId].velocity.addScaledVector(modeDirection, modes[modeIndex].vector[vectorIndex] * scale);
+    addVelocityImpulse(nodes[nodeId], modeDirection, modes[modeIndex].vector[vectorIndex] * scale);
   });
   state.statusUntil = performance.now() + 2800;
   statusBanner.textContent = `Excited pure mode v${modeIndex + 1}. This isolates its natural deformation pattern.`;
@@ -1077,8 +1088,9 @@ function applyRenderMode(value) {
 function resetCalmState() {
   for (const node of nodes) {
     node.displacement = 0;
-    node.velocity.set(0, 0, 0);
     node.position.copy(node.anchor);
+    node.previousPosition.copy(node.anchor);
+    node.acceleration.set(0, 0, 0);
   }
   state.activeMode = null;
   buildModeGallery();
