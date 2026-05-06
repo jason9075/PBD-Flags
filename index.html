@@ -137,6 +137,23 @@
       box-shadow: 0 12px 36px rgba(0, 0, 0, 0.22);
     }
 
+    .github-ribbon {
+      position: fixed;
+      top: 0;
+      right: 0;
+      z-index: 35;
+      display: block;
+      width: 96px;
+      height: 96px;
+      overflow: hidden;
+    }
+
+    .github-ribbon img {
+      display: block;
+      width: 96px;
+      height: 96px;
+    }
+
     .lil-gui {
       --background-color: rgba(59, 66, 82, 0.88);
       --widget-color: rgba(76, 86, 106, 0.92);
@@ -363,7 +380,7 @@
     #dashboard {
       position: fixed;
       right: 1rem;
-      top: 1rem;
+      top: 5.8rem;
       bottom: 1rem;
       z-index: 12;
       width: min(var(--side-panel-width), calc(100vw - 2rem));
@@ -594,6 +611,18 @@
   <div id="app">
     <div id="wind-overlay" aria-hidden="true"></div>
     <div id="node-labels" aria-hidden="true"></div>
+    <a
+      class="github-ribbon"
+      href="https://github.com/jason9075/PBD-Flags"
+      aria-label="View the source on GitHub"
+    ><img
+      loading="lazy"
+      decoding="async"
+      width="149"
+      height="149"
+      src="https://github.blog/wp-content/uploads/2008/12/forkme_right_green_007200.png"
+      alt="View on GitHub"
+    ></a>
     <button
       id="open-math"
       type="button"
