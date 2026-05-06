@@ -556,6 +556,7 @@ function renderModalContent() {
         K\\mathbf{v}_i = \\lambda_i \\mathbf{v}_i, \\qquad \\omega_i = \\sqrt{\\lambda_i}
       $$</p>
       <p>Projecting the current shape onto each mode reveals which oscillation family the chosen force excites most strongly. Localized forcing near the tip tends to emphasize higher-frequency modes because it injects sharper spatial variation.</p>
+      <p>In the cloth step, each distance constraint applies half of the positional correction to each free endpoint. This keeps the pairwise solve balanced. When stiffness rises above about <code>2.0</code>, the per-link correction becomes too aggressive for this 7-iteration Verlet/PBD loop, so the solver starts overshooting and injecting energy instead of converging.</p>
       <pre><code class="language-js">for (const mode of modes) {
   const amplitude = dot(displacement, mode.vector);
   bars.push(Math.abs(amplitude));
@@ -573,6 +574,7 @@ function renderModalContent() {
       $$</p>
       <p>每個特徵向量 $\\mathbf{v}_i$ 對應一種「純模式」的旗幟形狀，而特徵值決定它的自然頻率。當你把目前位移投影到這些模態上，就能看出哪個模式最主導當前運動。</p>
       <p>尾端施力比全域施力更容易激發高頻模態，因為尾端脈衝在空間上更局部，會帶入較尖銳的形變，這種形狀和高階模態更接近。</p>
+      <p>在布料步進裡，每條距離約束都只把一半的位置修正量分給每個自由端點，這樣兩端共同承擔修正。當 stiffness 高到大約 <code>2.0</code> 以上時，單條 link 的修正量對這個 7 輪迭代的 Verlet/PBD solver 來說就太激進了，結果會從收斂變成 overshoot，反而把能量打進系統裡，於是旗面開始亂甩甚至炸掉。</p>
       <pre><code class="language-js">for (const mode of modes) {
   const amplitude = dot(displacement, mode.vector);
   bars.push(Math.abs(amplitude));
@@ -642,6 +644,8 @@ function updateNodeMotion(dt) {
       }
 
       const difference = (distance - link.restLength) / distance;
+      // Split the positional correction evenly across two free endpoints.
+      // With one fixed endpoint, the full correction is applied to the free node below.
       const correction = delta.multiplyScalar(0.5 * stretchStiffness * difference);
 
       if (!a.fixed && !b.fixed) {
@@ -1257,7 +1261,7 @@ guiControllers.push(
   gui.add(ui, "force", 0.3, 10, 0.1).name("Force").onChange((value) => {
     state.forceScale = value;
   }),
-  gui.add(ui, "stiffness", 0.1, 2.6, 0.1).name("Stiffness").onChange((value) => {
+  gui.add(ui, "stiffness", 0.1, 2.0, 0.1).name("Stiffness").onChange((value) => {
     state.stiffnessScale = value;
     updateModes();
     state.statusUntil = performance.now() + 2400;
