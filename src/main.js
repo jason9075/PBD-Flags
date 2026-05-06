@@ -31,8 +31,8 @@ const POLE_X = -1.2 * REST_X;
 const TRACE_LENGTH = 54;
 const DISPLACEMENT_DIRECTION = new THREE.Vector3(0.12, 0, 1).normalize();
 const WIND_DISPLACEMENT_DIRECTION = new THREE.Vector3(1, 0, -0.12).normalize();
-const WIND_ACCELERATION_SCALE = 18;
 const GRAVITY_ACCELERATION = -9.8;
+const IMPULSE_DURATION = 1 / 60;
 const FREE_INDICES = [];
 const FREE_LOOKUP = new Map();
 
@@ -88,8 +88,8 @@ const DEFAULT_STATE = {
   isAnimating: true,
   modalLanguage: "en",
   forceTarget: "tip",
-  forceScale: 1.6,
-  stiffnessScale: 1.2,
+  forceScale: 6,
+  stiffnessScale: 360,
   massScale: 1,
   dampingScale: 2.8,
   windEnabled: false,
@@ -561,7 +561,7 @@ function renderModalContent() {
         K\\mathbf{v}_i = \\lambda_i \\mathbf{v}_i, \\qquad \\omega_i = \\sqrt{\\lambda_i}
       $$</p>
       <p>Projecting the current shape onto each mode reveals which oscillation family the chosen force excites most strongly. Localized forcing near the tip tends to emphasize higher-frequency modes because it injects sharper spatial variation.</p>
-      <p>In the cloth step, each distance constraint applies half of the positional correction to each free endpoint. This keeps the pairwise solve balanced. When stiffness rises above about <code>2.0</code>, the per-link correction becomes too aggressive for this 7-iteration Verlet/PBD loop, so the solver starts overshooting and injecting energy instead of converging.</p>
+      <p>In the cloth step, the GUI stiffness is a spring constant $k$ in N/m. Each link uses the dimensionless response $1 - e^{-k w\\Delta t^2 / m}$, where $w$ is the link weight and $m$ is the per-node mass. Each free endpoint receives half of that positional correction, which keeps the pairwise solve balanced while tying the correction strength to physical units.</p>
       <pre><code class="language-js">for (const mode of modes) {
   const amplitude = dot(displacement, mode.vector);
   bars.push(Math.abs(amplitude));
@@ -579,7 +579,7 @@ function renderModalContent() {
       $$</p>
       <p>每個特徵向量 $\\mathbf{v}_i$ 對應一種「純模式」的旗幟形狀，而特徵值決定它的自然頻率。當你把目前位移投影到這些模態上，就能看出哪個模式最主導當前運動。</p>
       <p>尾端施力比全域施力更容易激發高頻模態，因為尾端脈衝在空間上更局部，會帶入較尖銳的形變，這種形狀和高階模態更接近。</p>
-      <p>在布料步進裡，每條距離約束都只把一半的位置修正量分給每個自由端點，這樣兩端共同承擔修正。當 stiffness 高到大約 <code>2.0</code> 以上時，單條 link 的修正量對這個 7 輪迭代的 Verlet/PBD solver 來說就太激進了，結果會從收斂變成 overshoot，反而把能量打進系統裡，於是旗面開始亂甩甚至炸掉。</p>
+      <p>在布料步進裡，GUI 的 stiffness 現在被定義成彈簧常數 $k$，單位是 N/m。每條 link 會用 $1 - e^{-k w\\Delta t^2 / m}$ 當成無因次響應，其中 $w$ 是 link weight，$m$ 是每個節點分到的質量。之後再把一半的位置修正量分給每個自由端點，讓兩端共同承擔修正，同時把修正強度綁回有單位的物理量。</p>
       <pre><code class="language-js">for (const mode of modes) {
   const amplitude = dot(displacement, mode.vector);
   bars.push(Math.abs(amplitude));
@@ -604,7 +604,6 @@ function renderModalContent() {
 function updateNodeMotion(dt) {
   const gravity = new THREE.Vector3(0, GRAVITY_ACCELERATION, 0);
   const damping = Math.exp(-state.dampingScale * dt / state.massScale);
-  const stretchStiffness = state.stiffnessScale;
   const constraintIterations = 7;
   const displacementDirection = rotateDirectionByAnchor(DISPLACEMENT_DIRECTION);
   const dtSquared = dt * dt;
@@ -649,9 +648,10 @@ function updateNodeMotion(dt) {
       }
 
       const difference = (distance - link.restLength) / distance;
+      const response = 1 - Math.exp(-(state.stiffnessScale * link.weight * dtSquared) / nodeMass);
       // Split the positional correction evenly across two free endpoints.
       // With one fixed endpoint, the full correction is applied to the free node below.
-      const correction = delta.multiplyScalar(0.5 * stretchStiffness * link.weight * difference);
+      const correction = delta.multiplyScalar(0.5 * response * difference);
 
       if (!a.fixed && !b.fixed) {
         a.position.add(correction);
@@ -685,10 +685,12 @@ function applyWindDrive(now) {
     return;
   }
 
+  const nodeMass = getNodeMass();
   for (const index of getMovableNodeIndices()) {
     const node = nodes[index];
     const windDirection = getWindDirection(now, node);
-    node.acceleration.addScaledVector(windDirection, getWindDriveValue(now, node) * WIND_ACCELERATION_SCALE);
+    const windForce = getWindDriveValue(now, node) * state.forceScale;
+    node.acceleration.addScaledVector(windDirection, windForce / nodeMass);
   }
 }
 
@@ -708,14 +710,14 @@ function getWindDriveValue(now, node) {
 
   if (state.windMode === "pulse") {
     const burst = Math.max(0, Math.sin(now * 0.006 + node.col * 0.7));
-    const ripple = 0.0045 * (0.5 + 0.5 * Math.sin(phase * 0.72));
-    return (burst * burst * 0.042 + ripple) * state.forceScale;
+    const ripple = 0.1 * (0.5 + 0.5 * Math.sin(phase * 0.72));
+    return burst * burst * 0.9 + ripple;
   }
 
-  const baseFlow = 0.018;
-  const ripple = 0.006 * (0.5 + 0.5 * Math.sin(phase));
-  const gust = 0.02 * Math.max(0, Math.sin(phase * 0.47 + 1.2));
-  return (baseFlow + ripple + gust) * state.forceScale;
+  const baseFlow = 0.35;
+  const ripple = 0.15 * (0.5 + 0.5 * Math.sin(phase));
+  const gust = 0.5 * Math.max(0, Math.sin(phase * 0.47 + 1.2));
+  return baseFlow + ripple + gust;
 }
 
 function getWindArrowState(now) {
@@ -1114,12 +1116,13 @@ function applyImpulse(target, magnitude) {
   const selected = getImpulseSelection(target);
   const impulseDirection = rotateDirectionByAnchor(DISPLACEMENT_DIRECTION);
   const nodeMass = getNodeMass();
+  const impulseMagnitude = magnitude * IMPULSE_DURATION;
 
   selected.forEach((index) => {
     const node = nodes[index];
     const rowBias = 1 - Math.abs(node.row - 1) * 0.18;
     const sign = node.row === 1 ? 1 : 0.86;
-    addVelocityImpulse(node, impulseDirection, (magnitude * rowBias * sign) / nodeMass);
+    addVelocityImpulse(node, impulseDirection, (impulseMagnitude * rowBias * sign) / nodeMass);
   });
 
   state.lastImpulseTarget = target;
@@ -1127,19 +1130,19 @@ function applyImpulse(target, magnitude) {
   impulseArrow.line.material.opacity = 1;
   impulseArrow.cone.material.opacity = 1;
   state.statusUntil = performance.now() + 2600;
-  statusBanner.textContent = `Applied ${target} pulse at ${magnitude.toFixed(1)}x force. Watch which bars rise first.`;
+  statusBanner.textContent = `Applied ${target} pulse at ${magnitude.toFixed(1)} N for ${(IMPULSE_DURATION * 1000).toFixed(1)} ms. Watch which bars rise first.`;
 }
 
 function exciteMode(modeIndex) {
   state.activeMode = modeIndex;
   buildModeGallery();
-  const scale = state.forceScale * 0.62;
+  const scale = (state.forceScale * IMPULSE_DURATION * 0.62) / getNodeMass();
   const modeDirection = rotateDirectionByAnchor(DISPLACEMENT_DIRECTION);
   FREE_INDICES.forEach((nodeId, vectorIndex) => {
     addVelocityImpulse(nodes[nodeId], modeDirection, modes[modeIndex].vector[vectorIndex] * scale);
   });
   state.statusUntil = performance.now() + 2800;
-  statusBanner.textContent = `Excited pure mode v${modeIndex + 1}. This isolates its natural deformation pattern.`;
+  statusBanner.textContent = `Excited pure mode v${modeIndex + 1} with a ${state.forceScale.toFixed(1)} N equivalent pulse shape.`;
 }
 
 function applyRenderMode(value) {
@@ -1312,16 +1315,18 @@ const cutModeController = gui.add(ui, "cutMode").name("Cut Mode").onChange((valu
 });
 const restoreLinksController = gui.add(ui, "restoreLinks").name("Restore Links");
 
-guiControllers.push(
+  guiControllers.push(
   impulseController,
-  gui.add(ui, "force", 0.3, 10, 0.1).name("Force").onChange((value) => {
+  gui.add(ui, "force", 0.5, 20, 0.5).name("Drive Force (N)").onChange((value) => {
     state.forceScale = value;
+    state.statusUntil = performance.now() + 2400;
+    statusBanner.textContent = `Set drive force to ${state.forceScale.toFixed(1)} N. Wind uses it as force amplitude and pulse uses it for a ${Math.round(IMPULSE_DURATION * 1000)} ms shove.`;
   }),
-  gui.add(ui, "stiffness", 0.1, 2.0, 0.1).name("Stiffness").onChange((value) => {
+  gui.add(ui, "stiffness", 20, 1200, 10).name("Spring Stiffness (N/m)").onChange((value) => {
     state.stiffnessScale = value;
     updateModes();
     state.statusUntil = performance.now() + 2400;
-    statusBanner.textContent = `Set stiffness to ${state.stiffnessScale.toFixed(1)}. Higher values enforce the link constraints more aggressively.`;
+    statusBanner.textContent = `Set spring stiffness to ${state.stiffnessScale.toFixed(0)} N/m. The per-link response is 1 - exp(-k w dt^2 / m).`;
   }),
   gui.add(ui, "mass", 0.5, 2.8, 0.1).name("Mass (kg)").onChange((value) => {
     state.massScale = value;
@@ -1329,10 +1334,10 @@ guiControllers.push(
     state.statusUntil = performance.now() + 2400;
     statusBanner.textContent = `Set total cloth mass to ${state.massScale.toFixed(1)} kg. It is split across all 12 nodes, so wind and impulses drive the flag less aggressively.`;
   }),
-  gui.add(ui, "damping", 0.1, 6, 0.1).name("Damping").onChange((value) => {
+  gui.add(ui, "damping", 0.1, 6, 0.1).name("Damping (kg/s)").onChange((value) => {
     state.dampingScale = value;
     state.statusUntil = performance.now() + 2400;
-    statusBanner.textContent = `Set damping to ${state.dampingScale.toFixed(1)}. Higher values remove motion faster each frame.`;
+    statusBanner.textContent = `Set damping to ${state.dampingScale.toFixed(1)} kg/s. Higher values remove motion faster each frame.`;
   }),
   windController,
   windModeController,
