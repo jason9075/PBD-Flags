@@ -32,6 +32,7 @@ const TRACE_LENGTH = 54;
 const DISPLACEMENT_DIRECTION = new THREE.Vector3(0.12, 0, 1).normalize();
 const WIND_DISPLACEMENT_DIRECTION = new THREE.Vector3(1, 0, -0.12).normalize();
 const WIND_ACCELERATION_SCALE = 18;
+const GRAVITY_ACCELERATION = -9.8;
 const FREE_INDICES = [];
 const FREE_LOOKUP = new Map();
 
@@ -601,7 +602,7 @@ function renderModalContent() {
 }
 
 function updateNodeMotion(dt) {
-  const gravity = new THREE.Vector3(0, -4.4, 0);
+  const gravity = new THREE.Vector3(0, GRAVITY_ACCELERATION, 0);
   const damping = Math.exp(-state.dampingScale * dt / state.massScale);
   const stretchStiffness = state.stiffnessScale;
   const constraintIterations = 7;
@@ -1322,11 +1323,11 @@ guiControllers.push(
     state.statusUntil = performance.now() + 2400;
     statusBanner.textContent = `Set stiffness to ${state.stiffnessScale.toFixed(1)}. Higher values enforce the link constraints more aggressively.`;
   }),
-  gui.add(ui, "mass", 0.5, 2.8, 0.1).name("Mass").onChange((value) => {
+  gui.add(ui, "mass", 0.5, 2.8, 0.1).name("Mass (kg)").onChange((value) => {
     state.massScale = value;
     updateModes();
     state.statusUntil = performance.now() + 2400;
-    statusBanner.textContent = `Set total cloth mass to ${state.massScale.toFixed(1)}. It is split across all 12 nodes, so wind and impulses drive the flag less aggressively.`;
+    statusBanner.textContent = `Set total cloth mass to ${state.massScale.toFixed(1)} kg. It is split across all 12 nodes, so wind and impulses drive the flag less aggressively.`;
   }),
   gui.add(ui, "damping", 0.1, 6, 0.1).name("Damping").onChange((value) => {
     state.dampingScale = value;
