@@ -206,11 +206,6 @@ function buildNodeLabels() {
   });
 }
 
-function getColumnSag(col, stiffnessScale) {
-  const normalized = col / (COLS - 1);
-  return normalized * normalized * (0.2 + (1.55 / stiffnessScale));
-}
-
 for (let row = 0; row < ROWS; row += 1) {
   for (let col = 0; col < COLS; col += 1) {
     const index = nodeIndex(row, col);
