@@ -655,7 +655,7 @@ function updateNodeMotion(dt) {
       const difference = (distance - link.restLength) / distance;
       // Split the positional correction evenly across two free endpoints.
       // With one fixed endpoint, the full correction is applied to the free node below.
-      const correction = delta.multiplyScalar(0.5 * stretchStiffness * difference);
+      const correction = delta.multiplyScalar(0.5 * stretchStiffness * link.weight * difference);
 
       if (!a.fixed && !b.fixed) {
         a.position.add(correction);
