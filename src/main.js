@@ -90,6 +90,7 @@ const DEFAULT_STATE = {
   forceScale: 1.6,
   stiffnessScale: 1.2,
   massScale: 1,
+  dampingScale: 2.8,
   windEnabled: false,
   windMode: "steady",
   renderMode: "solid",
@@ -110,6 +111,7 @@ const ui = {
   force: state.forceScale,
   stiffness: state.stiffnessScale,
   mass: state.massScale,
+  damping: state.dampingScale,
   wind: state.windEnabled,
   windMode: state.windMode,
   render: state.renderMode,
@@ -598,7 +600,7 @@ function renderModalContent() {
 
 function updateNodeMotion(dt) {
   const gravity = new THREE.Vector3(0, -4.4, 0);
-  const damping = Math.exp(-2.8 * dt / state.massScale);
+  const damping = Math.exp(-state.dampingScale * dt / state.massScale);
   const stretchStiffness = state.stiffnessScale;
   const constraintIterations = 7;
   const displacementDirection = rotateDirectionByAnchor(DISPLACEMENT_DIRECTION);
@@ -1132,6 +1134,7 @@ function syncGuiState() {
   ui.force = state.forceScale;
   ui.stiffness = state.stiffnessScale;
   ui.mass = state.massScale;
+  ui.damping = state.dampingScale;
   ui.wind = state.windEnabled;
   ui.windMode = state.windMode;
   ui.render = state.renderMode;
@@ -1272,6 +1275,11 @@ guiControllers.push(
     updateModes();
     state.statusUntil = performance.now() + 2400;
     statusBanner.textContent = `Set total cloth mass to ${state.massScale.toFixed(1)}. It is split across all 12 nodes, so wind and impulses drive the flag less aggressively.`;
+  }),
+  gui.add(ui, "damping", 0.1, 6, 0.1).name("Damping").onChange((value) => {
+    state.dampingScale = value;
+    state.statusUntil = performance.now() + 2400;
+    statusBanner.textContent = `Set damping to ${state.dampingScale.toFixed(1)}. Higher values remove motion faster each frame.`;
   }),
   windController,
   windModeController,
