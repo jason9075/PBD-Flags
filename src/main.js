@@ -561,6 +561,17 @@ function renderModalContent() {
   const modalCopy = {
     en: `
       <p>This flag is modeled as a small spring lattice with 12 nodes and 9 free vertical degrees of freedom after fixing the pole side.</p>
+      <p>The per-frame solver is split into three stages: a Verlet prediction pass, a PBD constraint pass, and a final displacement extraction pass for the modal UI.</p>
+      <p>The Verlet update advances each free node with the damped position form</p>
+      <p>$$
+        x_{t+\\Delta t} = x_t + (x_t - x_{t-\\Delta t}) e^{-c\\Delta t / m} + a_t\\Delta t^2
+      $$</p>
+      <p>where gravity and external drive first accumulate into $a_t$. This is why the solver stores <code>position</code> and <code>previousPosition</code> instead of a primary velocity state.</p>
+      <p>After that prediction, Position-Based Dynamics enforces the link lengths by iterating over every uncut link seven times. For each link, the solver measures the normalized stretch error</p>
+      <p>$$
+        \\frac{\\lVert x_b - x_a \\rVert - L}{\\lVert x_b - x_a \\rVert}
+      $$</p>
+      <p>and scales it by the spring response $1 - e^{-k w\\Delta t^2 / m}$ before splitting the positional correction across the two endpoints.</p>
       <p>The free displacement vector $q \\in \\mathbb{R}^9$ follows a damped second-order system:</p>
       <p>$$
         \\ddot{q} + c\\dot{q} + Kq = f(t)
@@ -578,6 +589,17 @@ function renderModalContent() {
     `,
     zhTW: `
       <p>這面旗子被建模成一個小型彈簧晶格。總共有 12 個節點，左側固定在旗桿上的 3 個點不動，因此剩下 9 個自由的垂直位移自由度。</p>
+      <p>每一幀的 solver 會分成三段：先做 Verlet 預測，再做 PBD 約束修正，最後再抽出 modal UI 要看的 displacement。</p>
+      <p>Verlet 更新對每個自由節點使用的形式是：</p>
+      <p>$$
+        x_{t+\\Delta t} = x_t + (x_t - x_{t-\\Delta t}) e^{-c\\Delta t / m} + a_t\\Delta t^2
+      $$</p>
+      <p>其中重力和外力會先累積到 $a_t$。這也是為什麼 solver 主要存的是 <code>position</code> 和 <code>previousPosition</code>，而不是把 velocity 當成主要狀態。</p>
+      <p>做完這個預測之後，Position-Based Dynamics 會把每條未被 cut 的 link 重複掃過 7 輪，強制它們回到接近原本長度。對每條 link，solver 先量出正規化的伸長誤差：</p>
+      <p>$$
+        \\frac{\\lVert x_b - x_a \\rVert - L}{\\lVert x_b - x_a \\rVert}
+      $$</p>
+      <p>再乘上彈簧響應 $1 - e^{-k w\\Delta t^2 / m}$，最後把位置修正量分配到兩個端點上。</p>
       <p>把自由位移寫成向量 $q \\in \\mathbb{R}^9$，其運動可近似為阻尼二階系統：</p>
       <p>$$
         \\ddot{q} + c\\dot{q} + Kq = f(t)
