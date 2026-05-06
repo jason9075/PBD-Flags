@@ -33,6 +33,8 @@ const DISPLACEMENT_DIRECTION = new THREE.Vector3(0.12, 0, 1).normalize();
 const WIND_DISPLACEMENT_DIRECTION = new THREE.Vector3(1, 0, -0.12).normalize();
 const GRAVITY_ACCELERATION = -9.8;
 const IMPULSE_DURATION = 1 / 60;
+// Give the tail a small opposite offset so the initial frame already shows a visible sag.
+const INITIAL_TAIL_OFFSET = DISPLACEMENT_DIRECTION.clone().multiplyScalar(-0.22);
 const FREE_INDICES = [];
 const FREE_LOOKUP = new Map();
 
@@ -189,6 +191,13 @@ function createRestPosition(row, col) {
   return new THREE.Vector3(POLE_X + col * REST_X, FLAG_TOP_Y - row * REST_Y, 0);
 }
 
+function getInitialNodePosition(node) {
+  if (tailIndices.includes(node.index)) {
+    return node.anchor.clone().add(INITIAL_TAIL_OFFSET);
+  }
+  return node.anchor.clone();
+}
+
 function buildNodeLabels() {
   nodeLabelsOverlay.innerHTML = "";
   nodeLabelElements.length = 0;
@@ -218,8 +227,8 @@ for (let row = 0; row < ROWS; row += 1) {
       col,
       fixed,
       anchor,
-      position: anchor.clone(),
-      previousPosition: anchor.clone(),
+      position: fixed ? anchor.clone() : getInitialNodePosition({ index, anchor }),
+      previousPosition: fixed ? anchor.clone() : getInitialNodePosition({ index, anchor }),
       acceleration: new THREE.Vector3(),
       displacement: 0,
     });
@@ -1164,8 +1173,9 @@ function resetSceneState() {
 
   for (const node of nodes) {
     node.displacement = 0;
-    node.position.copy(node.anchor);
-    node.previousPosition.copy(node.anchor);
+    const initialPosition = node.fixed ? node.anchor.clone() : getInitialNodePosition(node);
+    node.position.copy(initialPosition);
+    node.previousPosition.copy(initialPosition);
     node.acceleration.set(0, 0, 0);
   }
   traceStates.forEach((trace) => trace.splice(0, trace.length));
