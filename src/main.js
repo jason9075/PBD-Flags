@@ -83,7 +83,7 @@ floor.rotation.x = -Math.PI * 0.5;
 floor.position.set(1.45, -2.55, -0.25);
 scene.add(floor);
 
-const state = {
+const DEFAULT_STATE = {
   isAnimating: true,
   modalLanguage: "en",
   forceTarget: "tip",
@@ -103,6 +103,7 @@ const state = {
   hoveredLinkIndex: -1,
   pointerInsideCanvas: false,
 };
+const state = { ...DEFAULT_STATE };
 
 const ui = {
   impulseTarget: state.forceTarget,
@@ -117,7 +118,7 @@ const ui = {
   modeArrows: state.showArrows,
   cutMode: state.cutMode,
   applyPulse: () => applyImpulse(state.forceTarget, state.forceScale),
-  resetCalm: () => resetCalmState(),
+  reset: () => resetSceneState(),
   restoreLinks: () => restoreAllLinks(),
   resetView: () => resetView(),
 };
@@ -162,6 +163,10 @@ impulseArrow.visible = false;
 impulseArrow.line.material.transparent = true;
 impulseArrow.cone.material.transparent = true;
 scene.add(impulseArrow);
+
+function getNodeMass(totalMass = state.massScale) {
+  return totalMass / NODE_COUNT;
+}
 
 function nodeIndex(row, col) {
   return row * COLS + col;
@@ -398,6 +403,7 @@ for (let index = 0; index < tailIndices.length; index += 1) {
 
 function buildModeMatrix(stiffnessScale, massScale) {
   const size = FREE_INDICES.length;
+  const nodeMass = getNodeMass(massScale);
   const matrix = Array.from({ length: size }, () => Array(size).fill(0));
   for (const link of links) {
     if (link.cut) {
@@ -406,7 +412,7 @@ function buildModeMatrix(stiffnessScale, massScale) {
     const { a, b, weight } = link;
     const freeA = FREE_LOOKUP.get(a);
     const freeB = FREE_LOOKUP.get(b);
-    const k = (weight * stiffnessScale) / massScale;
+    const k = (weight * stiffnessScale) / nodeMass;
     if (freeA !== undefined) {
       matrix[freeA][freeA] += k;
     }
@@ -591,10 +597,11 @@ function renderModalContent() {
 function updateNodeMotion(dt) {
   const gravity = new THREE.Vector3(0, -4.4, 0);
   const damping = Math.exp(-2.8 * dt / state.massScale);
-  const stretchStiffness = Math.min(0.34 + state.stiffnessScale * 0.2, 0.92);
+  const stretchStiffness = state.stiffnessScale;
   const constraintIterations = 7;
   const displacementDirection = rotateDirectionByAnchor(DISPLACEMENT_DIRECTION);
   const dtSquared = dt * dt;
+  const nodeMass = getNodeMass();
 
   for (const node of nodes) {
     if (node.fixed) {
@@ -604,8 +611,8 @@ function updateNodeMotion(dt) {
       continue;
     }
 
+    node.acceleration.multiplyScalar(1 / nodeMass);
     node.acceleration.add(gravity);
-    node.acceleration.multiplyScalar(1 / state.massScale);
 
     const currentPosition = node.position.clone();
     const verletStep = node.position.clone().sub(node.previousPosition).multiplyScalar(damping);
@@ -1048,12 +1055,13 @@ function updateImpulseArrow(now = performance.now()) {
 function applyImpulse(target, magnitude) {
   const selected = getImpulseSelection(target);
   const impulseDirection = rotateDirectionByAnchor(DISPLACEMENT_DIRECTION);
+  const nodeMass = getNodeMass();
 
   selected.forEach((index) => {
     const node = nodes[index];
     const rowBias = 1 - Math.abs(node.row - 1) * 0.18;
     const sign = node.row === 1 ? 1 : 0.86;
-    addVelocityImpulse(node, impulseDirection, (magnitude * rowBias * sign) / state.massScale);
+    addVelocityImpulse(node, impulseDirection, (magnitude * rowBias * sign) / nodeMass);
   });
 
   state.lastImpulseTarget = target;
@@ -1085,19 +1093,28 @@ function applyRenderMode(value) {
   freePoints.material.size = wireframe ? 0.135 : 0.12;
 }
 
-function resetCalmState() {
+function resetSceneState() {
+  Object.assign(state, DEFAULT_STATE);
+  setCutMode(false);
+  links.forEach((link) => {
+    link.cut = false;
+  });
+  highlightedLink.visible = false;
+
   for (const node of nodes) {
     node.displacement = 0;
     node.position.copy(node.anchor);
     node.previousPosition.copy(node.anchor);
     node.acceleration.set(0, 0, 0);
   }
-  state.activeMode = null;
+  traceStates.forEach((trace) => trace.splice(0, trace.length));
   buildModeGallery();
+  updateModes();
+  updateControls();
+  applyRenderMode(state.renderMode);
   updateGeometry();
-  syncGuiState();
   state.statusUntil = performance.now() + 2200;
-  statusBanner.textContent = "Reset to flat release. With wind off, the flag now falls under gravity and settles downward.";
+  statusBanner.textContent = "Reset scene state and restored the default parameters.";
 }
 
 function resetView() {
@@ -1244,13 +1261,13 @@ guiControllers.push(
     state.stiffnessScale = value;
     updateModes();
     state.statusUntil = performance.now() + 2400;
-    statusBanner.textContent = `Raised stiffness to ${state.stiffnessScale.toFixed(1)}x. Higher eigenvalues produce faster, tighter flutter.`;
+    statusBanner.textContent = `Set stiffness to ${state.stiffnessScale.toFixed(1)}. Higher values enforce the link constraints more aggressively.`;
   }),
   gui.add(ui, "mass", 0.5, 2.8, 0.1).name("Mass").onChange((value) => {
     state.massScale = value;
     updateModes();
     state.statusUntil = performance.now() + 2400;
-    statusBanner.textContent = `Set mass to ${state.massScale.toFixed(1)}x. Higher mass adds inertia and lowers the flutter frequencies.`;
+    statusBanner.textContent = `Set total cloth mass to ${state.massScale.toFixed(1)}. It is split across all 12 nodes, so wind and impulses drive the flag less aggressively.`;
   }),
   windController,
   windModeController,
@@ -1269,7 +1286,7 @@ guiControllers.push(
 );
 
 gui.add(ui, "applyPulse").name("Apply Pulse");
-gui.add(ui, "resetCalm").name("Reset Calm");
+gui.add(ui, "reset").name("Reset");
 gui.add(ui, "resetView").name("Reset View");
 
 const cutModeRow = cutModeController.domElement;
