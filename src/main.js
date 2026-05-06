@@ -103,6 +103,7 @@ const DEFAULT_STATE = {
   lastImpulseTarget: "tip",
   hoveredLinkIndex: -1,
   pointerInsideCanvas: false,
+  poleReleased: false,
 };
 const state = { ...DEFAULT_STATE };
 
@@ -120,6 +121,7 @@ const ui = {
   modeArrows: state.showArrows,
   cutMode: state.cutMode,
   applyPulse: () => applyImpulse(state.forceTarget, state.forceScale),
+  releasePole: () => releasePoleAnchors(),
   reset: () => resetSceneState(),
   restoreLinks: () => restoreAllLinks(),
   resetView: () => resetView(),
@@ -170,6 +172,10 @@ function getNodeMass(totalMass = state.massScale) {
   return totalMass / NODE_COUNT;
 }
 
+function getMovableNodeIndices() {
+  return nodes.filter((node) => !node.fixed).map((node) => node.index);
+}
+
 function nodeIndex(row, col) {
   return row * COLS + col;
 }
@@ -184,6 +190,7 @@ function createRestPosition(row, col) {
 
 function buildNodeLabels() {
   nodeLabelsOverlay.innerHTML = "";
+  nodeLabelElements.length = 0;
   windLabel = document.createElement("div");
   windLabel.id = "wind-label";
   windLabel.className = "wind-label";
@@ -682,14 +689,14 @@ function applyWindDrive(now) {
     return;
   }
 
-  for (const index of FREE_INDICES) {
+  for (const index of getMovableNodeIndices()) {
     const node = nodes[index];
     const windDirection = getWindDirection(now, node);
     node.acceleration.addScaledVector(windDirection, getWindDriveValue(now, node) * WIND_ACCELERATION_SCALE);
   }
 }
 
-function getWindDirection(now, node = nodes[FREE_INDICES[0]]) {
+function getWindDirection(now, node = nodes[getMovableNodeIndices()[0] ?? FREE_INDICES[0]]) {
   const baseDirection = WIND_DISPLACEMENT_DIRECTION.clone();
 
   if (state.windMode !== "steady") {
@@ -723,16 +730,24 @@ function getWindArrowState(now) {
     };
   }
 
+  const movableIndices = getMovableNodeIndices();
+  if (!movableIndices.length) {
+    return {
+      direction: WIND_DISPLACEMENT_DIRECTION.clone(),
+      length: 0,
+    };
+  }
+
   let totalDrive = 0;
   const direction = new THREE.Vector3();
-  for (const index of FREE_INDICES) {
+  for (const index of movableIndices) {
     const node = nodes[index];
     const drive = getWindDriveValue(now, node);
     totalDrive += drive;
     direction.addScaledVector(getWindDirection(now, node), Math.abs(drive));
   }
 
-  const averageDrive = totalDrive / FREE_INDICES.length;
+  const averageDrive = totalDrive / movableIndices.length;
   if (direction.lengthSq() < 1e-6) {
     direction.copy(getWindDirection(now));
   } else {
@@ -744,10 +759,11 @@ function getWindArrowState(now) {
 }
 
 function getImpulseSelection(target) {
+  const movableIndices = getMovableNodeIndices();
   const map = {
-    tip: FREE_INDICES.filter((index) => nodes[index].col === COLS - 1),
-    mid: FREE_INDICES.filter((index) => nodes[index].col >= 1 && nodes[index].col <= 2),
-    global: FREE_INDICES,
+    tip: movableIndices.filter((index) => nodes[index].col === COLS - 1),
+    mid: movableIndices.filter((index) => nodes[index].col >= 1 && nodes[index].col <= 2),
+    global: movableIndices,
   };
 
   return map[target];
@@ -775,6 +791,44 @@ function restoreAllLinks() {
   updateGeometry();
   state.statusUntil = performance.now() + 2200;
   statusBanner.textContent = "Restored all links. The flag mesh and modal coupling are back to the intact lattice.";
+}
+
+function syncPoleAnchorState() {
+  const anchored = !state.poleReleased;
+  fixedPoints.visible = anchored;
+  anchorGroup.visible = anchored;
+
+  nodes.forEach((node, index) => {
+    if (node.col !== 0) {
+      return;
+    }
+    node.fixed = anchored;
+    const label = nodeLabelElements[index];
+    if (label) {
+      label.classList.toggle("fixed", anchored);
+    }
+  });
+}
+
+function releasePoleAnchors() {
+  if (state.poleReleased) {
+    return;
+  }
+
+  state.poleReleased = true;
+  state.activeMode = null;
+  nodes.forEach((node) => {
+    if (node.col !== 0) {
+      return;
+    }
+    node.previousPosition.copy(node.position);
+    node.acceleration.set(0, 0, 0);
+  });
+  syncPoleAnchorState();
+  buildModeGallery();
+  updateGeometry();
+  state.statusUntil = performance.now() + 2600;
+  statusBanner.textContent = "Released the three pole-side nodes. The flag is now fully free, while the modal readout still reflects the pinned-edge basis.";
 }
 
 function updateHighlightedLink() {
@@ -873,7 +927,9 @@ function updateGeometry() {
       fixedPositions.setXYZ(node.row, node.position.x, node.position.y, node.position.z + 0.18);
     } else {
       const freeIndex = FREE_LOOKUP.get(index);
-      freePositions.setXYZ(freeIndex, node.position.x, node.position.y, node.position.z);
+      if (freeIndex !== undefined) {
+        freePositions.setXYZ(freeIndex, node.position.x, node.position.y, node.position.z);
+      }
     }
   });
 
@@ -1114,6 +1170,7 @@ function resetSceneState() {
     node.acceleration.set(0, 0, 0);
   }
   traceStates.forEach((trace) => trace.splice(0, trace.length));
+  syncPoleAnchorState();
   buildModeGallery();
   updateModes();
   updateControls();
@@ -1298,6 +1355,7 @@ guiControllers.push(
 );
 
 gui.add(ui, "applyPulse").name("Apply Pulse");
+gui.add(ui, "releasePole").name("Release Pole");
 gui.add(ui, "reset").name("Reset");
 gui.add(ui, "resetView").name("Reset View");
 
