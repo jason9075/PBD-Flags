@@ -185,9 +185,6 @@ function nodeIndex(row, col) {
   return row * COLS + col;
 }
 
-function rotateDirectionByAnchor(direction) {
-  return direction.clone();
-}
 
 function createRestPosition(row, col) {
   return new THREE.Vector3(POLE_X + col * REST_X, FLAG_TOP_Y - row * REST_Y, 0);
@@ -520,10 +517,10 @@ node.position
 
 function updateNodeMotion(dt) {
   const gravity = new THREE.Vector3(0, GRAVITY_ACCELERATION, 0);
-  const damping = Math.exp(-state.dampingScale * dt / state.massScale);
   const constraintIterations = 7;
   const dtSquared = dt * dt;
   const nodeMass = getNodeMass();
+  const damping = Math.exp(-state.dampingScale * dt / nodeMass);
   const previousPositions = new Map();
   const nodeTerms = {};
 
@@ -1061,7 +1058,7 @@ function updateImpulseArrow(now = performance.now()) {
   const opacity = 1 - progress;
 
   impulseArrow.position.copy(origin);
-  impulseArrow.setDirection(rotateDirectionByAnchor(DISPLACEMENT_DIRECTION));
+  impulseArrow.setDirection(DISPLACEMENT_DIRECTION);
   impulseArrow.setLength(length, 0.2, 0.12);
   impulseArrow.line.material.opacity = opacity;
   impulseArrow.cone.material.opacity = opacity;
@@ -1070,7 +1067,7 @@ function updateImpulseArrow(now = performance.now()) {
 
 function applyImpulse(target, magnitude) {
   const selected = getImpulseSelection(target);
-  const impulseDirection = rotateDirectionByAnchor(DISPLACEMENT_DIRECTION);
+  const impulseDirection = DISPLACEMENT_DIRECTION;
   const nodeMass = getNodeMass();
   const impulseMagnitude = magnitude * IMPULSE_DURATION;
 
@@ -1265,7 +1262,7 @@ const cutModeController = gui.add(ui, "cutMode").name("Cut Mode").onChange((valu
 });
 const restoreLinksController = gui.add(ui, "restoreLinks").name("Restore Links");
 
-  guiControllers.push(
+guiControllers.push(
   impulseController,
   gui.add(ui, "force", 0.5, 20, 0.5).name("Drive Force (N)").onChange((value) => {
     state.forceScale = value;
