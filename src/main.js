@@ -275,6 +275,15 @@ function buildDiagnosticsControls() {
       pbdToggle.setAttribute("aria-label", collapsed ? "Expand details" : "Collapse details");
     });
   }
+
+  const pbdFormulaTrigger = document.getElementById("pbd-formula-trigger");
+  if (pbdFormulaTrigger) {
+    pbdFormulaTrigger.addEventListener("mouseenter", () => {
+      const rect = pbdFormulaTrigger.getBoundingClientRect();
+      const spaceBelow = window.innerHeight - rect.bottom;
+      pbdFormulaTrigger.classList.toggle("tooltip-up", spaceBelow < 320);
+    });
+  }
 }
 
 for (let row = 0; row < ROWS; row += 1) {

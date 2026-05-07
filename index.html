@@ -423,6 +423,41 @@
       transform: translateY(0);
     }
 
+    .tooltip-params {
+      display: grid;
+      grid-template-columns: auto 1fr;
+      gap: 0.15rem 0.6rem;
+      margin-top: 0.55rem;
+      font-size: 0.7rem;
+      line-height: 1.45;
+    }
+
+    .formula-tooltip.tooltip-wide {
+      min-width: 26rem;
+    }
+
+    .formula-trigger.tooltip-up .formula-tooltip {
+      top: auto;
+      bottom: calc(100% + 0.5rem);
+      transform: translateY(4px);
+    }
+
+    .formula-trigger.tooltip-up:hover .formula-tooltip,
+    .formula-trigger.tooltip-up:focus-visible .formula-tooltip {
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    .tooltip-params dt {
+      color: var(--nord8);
+      white-space: nowrap;
+    }
+
+    .tooltip-params dd {
+      color: var(--nord5);
+      margin: 0;
+    }
+
     .formula-tooltip .katex-display {
       margin: 0.35rem 0;
     }
@@ -645,10 +680,19 @@
           <h3>Verlet Diagnostics</h3>
           <span class="formula-trigger" tabindex="0" aria-label="Show Verlet formula">
             ?
-            <span class="formula-tooltip">
+            <span class="formula-tooltip tooltip-wide">
               $$
               x_{t+\Delta t} = x_t + (x_t - x_{t-\Delta t}) e^{-c \Delta t / m} + a_t \Delta t^2
               $$
+              <dl class="tooltip-params">
+                <dt>pos / $x_t$</dt><dd>current position</dd>
+                <dt>prev / $x_{t-\Delta t}$</dt><dd>previous position (implicit velocity)</dd>
+                <dt>delta</dt><dd>$x_t - x_{t-\Delta t}$, one-step displacement</dd>
+                <dt>damp / $e^{-c\Delta t/m}$</dt><dd>velocity retention per step</dd>
+                <dt>acc / $a_t$</dt><dd>acceleration = (gravity + wind + impulse) / mass</dd>
+                <dt>dt ms</dt><dd>frame timestep in milliseconds</dd>
+                <dt>next</dt><dd>predicted $x_{t+\Delta t}$ before PBD correction</dd>
+              </dl>
             </span>
           </span>
         </div>
@@ -690,7 +734,7 @@
         <div class="panel-heading">
           <button id="pbd-toggle" class="diagnostics-toggle" aria-label="Collapse details">▼</button>
           <h3>PBD Solver</h3>
-          <span class="formula-trigger" tabindex="0" aria-label="Show PBD formula">
+          <span class="formula-trigger" id="pbd-formula-trigger" tabindex="0" aria-label="Show PBD formula">
             ?
             <span class="formula-tooltip">
               $$
@@ -699,6 +743,15 @@
               $$
               \Delta x = \frac{\|b - a\| - L}{\|b - a\|} \times \text{resp}
               $$
+              <dl class="tooltip-params">
+                <dt>dist₀</dt><dd>link length after Verlet, before any PBD iteration</dd>
+                <dt>rest / $L$</dt><dd>rest length of the link, constant</dd>
+                <dt>err₀ / err₇</dt><dd>dist − rest before / after 7 iterations</dd>
+                <dt>resp</dt><dd>correction fraction ∈ [0, 1]; higher $k$ or lower $m$ → closer to 1</dd>
+                <dt>$k$</dt><dd>spring stiffness, N/m (Spring Stiffness slider)</dd>
+                <dt>$w$</dt><dd>link weight: 1.0 for H/V, 0.55 for shear</dd>
+                <dt>$m$</dt><dd>per-node mass = total mass / 12</dd>
+              </dl>
             </span>
           </span>
         </div>
