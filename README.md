@@ -21,7 +21,7 @@ The app is meant to be read as much as it is meant to be used. The code keeps th
 The core per-frame update is split into three phases:
 
 1. `Verlet`: predict the next node positions from the previous positions, damping, gravity, and accumulated external forces.
-2. `PBD`: run several rounds of distance-constraint correction across the link network.
+2. `PBD`: run several rounds of distance-constraint correction across the link network. Each round uses a Gauss-Seidel style update — each link reads the positions already modified by earlier links in the same round — so constraints closer to the pole are satisfied first and the free tail accumulates the residual error.
 3. `Displacement`: compute the final per-node displacement values used by the modal UI.
 
 ![Solver pipeline](assets/Pipeline.png)

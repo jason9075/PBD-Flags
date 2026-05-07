@@ -10,6 +10,9 @@ const statusBanner = document.getElementById("status-banner");
 const verletDiagnosticsBody = document.getElementById("verlet-diagnostics-body");
 const diagnosticsNodeSelect = document.getElementById("diagnostics-node-select");
 const diagnosticsAxisSelect = document.getElementById("diagnostics-axis-select");
+const pbdDiagnosticsBody = document.getElementById("pbd-diagnostics-body");
+const pbdLinkSelect = document.getElementById("pbd-link-select");
+const pbdAxisFilter = document.getElementById("pbd-axis-filter");
 const openMathButton = document.getElementById("open-math");
 const closeMathButton = document.getElementById("close-math");
 const languageToggle = document.getElementById("language-toggle");
@@ -142,6 +145,8 @@ const diagnosticsSelection = {
   axis: "z",
 };
 let diagnosticsFrameIndex = 0;
+const pbdDiagnosticsHistory = [];
+const pbdDiagnosticsSelection = { linkIndex: 0, axisFilter: "horizontal" };
 const pointerScreen = new THREE.Vector2();
 const projectedA = new THREE.Vector3();
 const projectedB = new THREE.Vector3();
@@ -242,6 +247,32 @@ function buildDiagnosticsControls() {
       diagnosticsDetail.hidden = collapsed;
       diagnosticsToggle.textContent = collapsed ? "▶" : "▼";
       diagnosticsToggle.setAttribute("aria-label", collapsed ? "Expand details" : "Collapse details");
+    });
+  }
+
+  if (pbdAxisFilter) {
+    pbdAxisFilter.addEventListener("change", (event) => {
+      pbdDiagnosticsSelection.axisFilter = event.target.value;
+      populatePbdLinkSelect();
+    });
+  }
+
+  if (pbdLinkSelect) {
+    populatePbdLinkSelect();
+    pbdLinkSelect.addEventListener("change", (event) => {
+      pbdDiagnosticsSelection.linkIndex = Number(event.target.value);
+      renderPbdDiagnostics();
+    });
+  }
+
+  const pbdToggle = document.getElementById("pbd-toggle");
+  const pbdDetail = document.getElementById("pbd-detail");
+  if (pbdToggle && pbdDetail) {
+    pbdToggle.addEventListener("click", () => {
+      const collapsed = !pbdDetail.hidden;
+      pbdDetail.hidden = collapsed;
+      pbdToggle.textContent = collapsed ? "▶" : "▼";
+      pbdToggle.setAttribute("aria-label", collapsed ? "Expand details" : "Collapse details");
     });
   }
 }
@@ -572,6 +603,19 @@ function updateNodeMotion(dt) {
     node.acceleration.set(0, 0, 0);
   }
 
+  const pbdTrackedLink = links[pbdDiagnosticsSelection.linkIndex];
+  let pbdCapture = null;
+  if (pbdTrackedLink && !pbdTrackedLink.cut) {
+    const a = nodes[pbdTrackedLink.a];
+    const b = nodes[pbdTrackedLink.b];
+    pbdCapture = {
+      distBefore: b.position.distanceTo(a.position),
+      rest: pbdTrackedLink.restLength,
+      response: 1 - Math.exp(-(state.stiffnessScale * pbdTrackedLink.weight * dtSquared) / nodeMass),
+      distAfter: 0,
+    };
+  }
+
   for (let iteration = 0; iteration < constraintIterations; iteration += 1) {
     for (const node of nodes) {
       if (node.fixed) {
@@ -616,6 +660,12 @@ function updateNodeMotion(dt) {
     }
   }
 
+  if (pbdCapture && pbdTrackedLink && !pbdTrackedLink.cut) {
+    const a = nodes[pbdTrackedLink.a];
+    const b = nodes[pbdTrackedLink.b];
+    pbdCapture.distAfter = b.position.distanceTo(a.position);
+  }
+
   let maxSpeed = 0;
   let totalSpeed = 0;
   let movableCount = 0;
@@ -645,6 +695,7 @@ function updateNodeMotion(dt) {
     avgSpeed: movableCount ? totalSpeed / movableCount : 0,
     tailDisplacement: tailDisplacement / tailIndices.length,
     iterations: constraintIterations,
+    pbdCapture,
   };
 }
 
@@ -698,6 +749,66 @@ function pushVerletDiagnostics(frameMetrics) {
   }
 
   renderVerletDiagnostics();
+}
+
+function populatePbdLinkSelect() {
+  if (!pbdLinkSelect) {
+    return;
+  }
+  const axisAbbr = { horizontal: "H", vertical: "V", shear: "S" };
+  const filtered = links
+    .map((link, index) => ({ link, index }))
+    .filter(({ link }) => pbdDiagnosticsSelection.axisFilter === "all" || link.axis === pbdDiagnosticsSelection.axisFilter);
+
+  pbdLinkSelect.innerHTML = filtered.map(({ link, index }) =>
+    `<option value="${index}">${link.a}→${link.b} (${axisAbbr[link.axis]})</option>`
+  ).join("");
+
+  if (filtered.length > 0) {
+    pbdDiagnosticsSelection.linkIndex = filtered[0].index;
+  }
+  renderPbdDiagnostics();
+}
+
+function renderPbdDiagnostics() {
+  if (!pbdDiagnosticsBody) {
+    return;
+  }
+
+  const rows = pbdDiagnosticsHistory.length
+    ? pbdDiagnosticsHistory.map((entry) => {
+        if (!entry.pbdCapture) {
+          return `<tr><td>${entry.frame}</td><td colspan="6">—</td></tr>`;
+        }
+        const { distBefore, rest, response, distAfter } = entry.pbdCapture;
+        return `
+          <tr>
+            <td>${entry.frame}</td>
+            <td>${distBefore.toFixed(2)}</td>
+            <td>${rest.toFixed(2)}</td>
+            <td>${(distBefore - rest).toFixed(3)}</td>
+            <td>${response.toFixed(2)}</td>
+            <td>${distAfter.toFixed(2)}</td>
+            <td>${(distAfter - rest).toFixed(3)}</td>
+          </tr>
+        `;
+      }).join("")
+    : `<tr><td>--</td><td>--</td><td>--</td><td>--</td><td>--</td><td>--</td><td>--</td></tr>`;
+
+  pbdDiagnosticsBody.innerHTML = rows;
+}
+
+function pushPbdDiagnostics(frameMetrics) {
+  pbdDiagnosticsHistory.unshift({
+    frame: `f${frameMetrics.frame}`,
+    pbdCapture: frameMetrics.pbdCapture ?? null,
+  });
+
+  if (pbdDiagnosticsHistory.length > DIAGNOSTIC_HISTORY_LENGTH) {
+    pbdDiagnosticsHistory.length = DIAGNOSTIC_HISTORY_LENGTH;
+  }
+
+  renderPbdDiagnostics();
 }
 
 function addVelocityImpulse(node, direction, magnitude, dt = 1 / 60) {
@@ -1122,12 +1233,14 @@ function resetSceneState() {
   }
   traceStates.forEach((trace) => trace.splice(0, trace.length));
   verletDiagnosticsHistory.length = 0;
+  pbdDiagnosticsHistory.length = 0;
   diagnosticsFrameIndex = 0;
   syncPoleAnchorState();
   updateControls();
   applyRenderMode(state.renderMode);
   updateGeometry();
   renderVerletDiagnostics();
+  renderPbdDiagnostics();
   state.statusUntil = performance.now() + 2200;
   statusBanner.textContent = "Reset scene state and restored the default parameters.";
 }
@@ -1333,6 +1446,7 @@ buildNodeLabels();
 buildDiagnosticsControls();
 renderModalContent();
 renderVerletDiagnostics();
+renderPbdDiagnostics();
 updateControls();
 applyRenderMode(state.renderMode);
 resize();
@@ -1351,10 +1465,9 @@ function animate(now) {
     const frameMetrics = updateNodeMotion(dt);
     updateGeometry();
     updateTraces();
-    pushVerletDiagnostics({
-      frame: ++diagnosticsFrameIndex,
-      ...frameMetrics,
-    });
+    const frameNumber = ++diagnosticsFrameIndex;
+    pushVerletDiagnostics({ frame: frameNumber, ...frameMetrics });
+    pushPbdDiagnostics({ frame: frameNumber, pbdCapture: frameMetrics.pbdCapture });
   }
   if (state.cutMode && state.pointerInsideCanvas) {
     updateHoveredLink(pointerScreen.x, pointerScreen.y);

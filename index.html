@@ -685,6 +685,57 @@
           </table>
         </div>
       </section>
+
+      <section class="panel" style="margin-top: 0.75rem;">
+        <div class="panel-heading">
+          <button id="pbd-toggle" class="diagnostics-toggle" aria-label="Collapse details">▼</button>
+          <h3>PBD Solver</h3>
+          <span class="formula-trigger" tabindex="0" aria-label="Show PBD formula">
+            ?
+            <span class="formula-tooltip">
+              $$
+              \text{resp} = 1 - e^{-k \, w \, \Delta t^2 / m}
+              $$
+              $$
+              \Delta x = \frac{\|b - a\| - L}{\|b - a\|} \times \text{resp}
+              $$
+            </span>
+          </span>
+        </div>
+        <div id="pbd-detail">
+          <p class="panel-note">Latest five pre/post-constraint distances for one link.</p>
+          <div class="diagnostics-controls">
+            <label>
+              Axis Filter
+              <select id="pbd-axis-filter">
+                <option value="horizontal" selected>Horizontal</option>
+                <option value="vertical">Vertical</option>
+                <option value="shear">Shear</option>
+              </select>
+            </label>
+          </div>
+          <div class="diagnostics-controls">
+            <label>
+              Link
+              <select id="pbd-link-select"></select>
+            </label>
+          </div>
+          <table class="diagnostics-table">
+            <thead>
+              <tr>
+                <th>Frame</th>
+                <th>dist₀</th>
+                <th>rest</th>
+                <th>err₀</th>
+                <th>resp</th>
+                <th>dist₇</th>
+                <th>err₇</th>
+              </tr>
+            </thead>
+            <tbody id="pbd-diagnostics-body"></tbody>
+          </table>
+        </div>
+      </section>
     </aside>
 
     <canvas id="canvas"></canvas>
