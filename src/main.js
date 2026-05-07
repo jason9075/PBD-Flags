@@ -36,6 +36,7 @@ const DISPLACEMENT_DIRECTION = new THREE.Vector3(0.12, 0, 1).normalize();
 const WIND_DISPLACEMENT_DIRECTION = new THREE.Vector3(1, 0, -0.12).normalize();
 const GRAVITY_ACCELERATION = -9.8;
 const IMPULSE_DURATION = 1 / 60;
+const WIND_FADE_DURATION = 600;
 // Give the tail a small opposite offset so the initial frame already shows a visible sag.
 const INITIAL_TAIL_OFFSET = DISPLACEMENT_DIRECTION.clone().multiplyScalar(-0.22);
 const FREE_INDICES = [];
@@ -98,9 +99,13 @@ const DEFAULT_STATE = {
   massScale: 1,
   dampingScale: 2.8,
   windEnabled: false,
+  windOffAt: 0,
   windMode: "steady",
   renderMode: "solid",
   showTraces: true,
+  showArrows: true,
+  showNodeLabels: true,
+  showWireframe: true,
   cutMode: false,
   statusUntil: 0,
   impulseUntil: 0,
@@ -121,6 +126,9 @@ const ui = {
   windMode: state.windMode,
   render: state.renderMode,
   tracePaths: state.showTraces,
+  showArrows: state.showArrows,
+  showNodeLabels: state.showNodeLabels,
+  showWireframe: state.showWireframe,
   cutMode: state.cutMode,
   applyPulse: () => applyImpulse(state.forceTarget, state.forceScale),
   toggleMotion: () => toggleMotion(),
@@ -165,18 +173,38 @@ const windDirectionArrow = new THREE.ArrowHelper(
 const windArrowDirection = new THREE.Vector3(1, 0, 0);
 windDirectionArrow.visible = false;
 scene.add(windDirectionArrow);
-const impulseArrow = new THREE.ArrowHelper(
-  DISPLACEMENT_DIRECTION.clone(),
-  new THREE.Vector3(0, 0, 0),
-  1.2,
-  0xbf616a,
-  0.2,
-  0.12,
-);
-impulseArrow.visible = false;
-impulseArrow.line.material.transparent = true;
-impulseArrow.cone.material.transparent = true;
-scene.add(impulseArrow);
+const impulseArrows = FREE_INDICES.map(() => {
+  const arrow = new THREE.ArrowHelper(
+    DISPLACEMENT_DIRECTION.clone(),
+    new THREE.Vector3(0, 0, 0),
+    1.2,
+    0xa3be8c,
+    0.2,
+    0.12,
+  );
+  arrow.visible = false;
+  arrow.line.material.transparent = true;
+  arrow.cone.material.transparent = true;
+  scene.add(arrow);
+  return arrow;
+});
+
+const WIND_FORCE_ARROW_COLOR = 0xa3be8c;
+const windForceArrows = FREE_INDICES.map(() => {
+  const arrow = new THREE.ArrowHelper(
+    new THREE.Vector3(1, 0, 0),
+    new THREE.Vector3(0, 0, 0),
+    0.5,
+    WIND_FORCE_ARROW_COLOR,
+    0.12,
+    0.07,
+  );
+  arrow.visible = false;
+  arrow.line.material.transparent = true;
+  arrow.cone.material.transparent = true;
+  scene.add(arrow);
+  return arrow;
+});
 
 function getNodeMass(totalMass = state.massScale) {
   return totalMass / NODE_COUNT;
@@ -830,7 +858,7 @@ function applyWindDrive(now) {
   }
 
   const nodeMass = getNodeMass();
-  for (const index of getMovableNodeIndices()) {
+  for (const index of getImpulseSelection(state.forceTarget)) {
     const node = nodes[index];
     const windDirection = getWindDirection(now, node);
     const windForce = getWindDriveValue(now, node) * state.forceScale;
@@ -841,8 +869,9 @@ function applyWindDrive(now) {
 function getWindDirection(now, node = nodes[getMovableNodeIndices()[0] ?? FREE_INDICES[0]]) {
   const baseDirection = WIND_DISPLACEMENT_DIRECTION.clone();
 
-  if (state.windMode !== "steady") {
-    return baseDirection;
+  if (state.windMode === "pulse") {
+    const swayAngle = 0.42 * Math.sin(now * 0.00055 + node.col * 0.5 + node.row * 0.28);
+    return baseDirection.applyAxisAngle(new THREE.Vector3(0, 1, 0), swayAngle).normalize();
   }
 
   const swayAngle = 0.2 * Math.sin(now * 0.0012 + node.col * 0.6 + node.row * 0.35);
@@ -935,8 +964,8 @@ function restoreAllLinks() {
 
 function syncPoleAnchorState() {
   const anchored = !state.poleReleased;
-  fixedPoints.visible = anchored;
-  anchorGroup.visible = anchored;
+  fixedPoints.visible = anchored && state.showNodeLabels;
+  anchorGroup.visible = anchored && state.showNodeLabels;
 
   nodes.forEach((node, index) => {
     if (node.col !== 0) {
@@ -1085,6 +1114,11 @@ function updateGeometry() {
 }
 
 function updateNodeLabels() {
+  if (!state.showNodeLabels) {
+    nodeLabelElements.forEach((label) => { label.style.display = "none"; });
+    return;
+  }
+
   const width = window.innerWidth;
   const height = window.innerHeight;
 
@@ -1109,7 +1143,7 @@ function updateWindLabel() {
     return;
   }
 
-  if (!state.windEnabled) {
+  if (!state.windEnabled || !state.showArrows) {
     windLabel.hidden = true;
     return;
   }
@@ -1160,40 +1194,89 @@ function updateWindDirectionArrow(now = performance.now()) {
   windDirectionArrow.position.copy(origin);
   windDirectionArrow.setDirection(direction);
   windDirectionArrow.setLength(length, 0.24, 0.14);
-  windDirectionArrow.visible = state.windEnabled;
+  windDirectionArrow.visible = state.windEnabled && state.showArrows;
+}
+
+function fadeArrows(arrows, startTime, duration, now) {
+  const t = Math.min(1, Math.max(0, (now - startTime) / duration));
+  const opacity = 1 - t;
+  if (opacity <= 0) {
+    for (const arrow of arrows) { arrow.visible = false; }
+    return;
+  }
+  for (const arrow of arrows) {
+    if (arrow.visible) {
+      arrow.line.material.opacity = opacity;
+      arrow.cone.material.opacity = opacity;
+    }
+  }
+}
+
+function updateWindForceArrows(now) {
+  if (!state.showArrows) {
+    for (const arrow of windForceArrows) { arrow.visible = false; }
+    return;
+  }
+
+  if (!state.windEnabled) {
+    fadeArrows(windForceArrows, state.windOffAt, WIND_FADE_DURATION, now);
+    return;
+  }
+
+  const targetSet = new Set(getImpulseSelection(state.forceTarget));
+  FREE_INDICES.forEach((freeNodeIndex, arrowIndex) => {
+    const arrow = windForceArrows[arrowIndex];
+    if (!targetSet.has(freeNodeIndex)) {
+      arrow.visible = false;
+      return;
+    }
+    const node = nodes[freeNodeIndex];
+    const direction = getWindDirection(now, node);
+    const drive = getWindDriveValue(now, node);
+    const length = 0.28 + Math.min(Math.abs(drive) * 0.5, 0.6);
+
+    arrow.position.copy(node.position);
+    arrow.setDirection(direction);
+    arrow.setLength(length, 0.12, 0.07);
+    arrow.line.material.opacity = 1;
+    arrow.cone.material.opacity = 1;
+    arrow.visible = true;
+  });
 }
 
 function updateImpulseArrow(now = performance.now()) {
-  if (now >= state.impulseUntil) {
-    impulseArrow.visible = false;
-    impulseArrow.line.material.opacity = 0;
-    impulseArrow.cone.material.opacity = 0;
+  if (!state.showArrows || now >= state.impulseUntil) {
+    for (const arrow of impulseArrows) {
+      arrow.visible = false;
+    }
     return;
   }
 
-  const selected = getImpulseSelection(state.lastImpulseTarget);
-  if (!selected.length) {
-    impulseArrow.visible = false;
+  const selectedSet = new Set(getImpulseSelection(state.lastImpulseTarget));
+  if (!selectedSet.size) {
+    for (const arrow of impulseArrows) {
+      arrow.visible = false;
+    }
     return;
   }
-
-  const origin = new THREE.Vector3();
-  selected.forEach((index) => {
-    origin.add(nodes[index].position);
-  });
-  origin.multiplyScalar(1 / selected.length);
-  origin.y += 0.45;
 
   const progress = 1 - Math.max(0, state.impulseUntil - now) / 1000;
   const length = 1.55 - progress * 0.35;
-  const opacity = 1 - progress;
 
-  impulseArrow.position.copy(origin);
-  impulseArrow.setDirection(DISPLACEMENT_DIRECTION);
-  impulseArrow.setLength(length, 0.2, 0.12);
-  impulseArrow.line.material.opacity = opacity;
-  impulseArrow.cone.material.opacity = opacity;
-  impulseArrow.visible = true;
+  FREE_INDICES.forEach((freeNodeIndex, arrowIndex) => {
+    const arrow = impulseArrows[arrowIndex];
+    if (!selectedSet.has(freeNodeIndex)) {
+      arrow.visible = false;
+      return;
+    }
+    const node = nodes[freeNodeIndex];
+    arrow.position.copy(node.position);
+    arrow.setDirection(DISPLACEMENT_DIRECTION);
+    arrow.setLength(length, 0.2, 0.12);
+    arrow.visible = true;
+  });
+
+  fadeArrows(impulseArrows, state.impulseUntil - 1000, 1000, now);
 }
 
 function applyImpulse(target, magnitude) {
@@ -1211,8 +1294,6 @@ function applyImpulse(target, magnitude) {
 
   state.lastImpulseTarget = target;
   state.impulseUntil = performance.now() + 1000;
-  impulseArrow.line.material.opacity = 1;
-  impulseArrow.cone.material.opacity = 1;
   state.statusUntil = performance.now() + 2600;
   statusBanner.textContent = `Applied ${target} pulse at ${magnitude.toFixed(1)} N for ${(IMPULSE_DURATION * 1000).toFixed(1)} ms. Watch how the tail motion and constraint recovery respond.`;
 }
@@ -1222,7 +1303,7 @@ function applyRenderMode(value) {
   const wireframe = value === "wireframe";
   flagMesh.visible = !wireframe;
   edgeLines.material.opacity = wireframe ? 0.88 : 0.38;
-  edgeLines.visible = true;
+  edgeLines.visible = state.showWireframe;
   freePoints.material.size = wireframe ? 0.135 : 0.12;
 }
 
@@ -1286,6 +1367,13 @@ function syncGuiState() {
   ui.windMode = state.windMode;
   ui.render = state.renderMode;
   ui.tracePaths = state.showTraces;
+  ui.showArrows = state.showArrows;
+  ui.showNodeLabels = state.showNodeLabels;
+  ui.showWireframe = state.showWireframe;
+  freePoints.visible = state.showNodeLabels;
+  fixedPoints.visible = state.showNodeLabels && !state.poleReleased;
+  anchorGroup.visible = state.showNodeLabels && !state.poleReleased;
+  edgeLines.visible = state.showWireframe;
   ui.cutMode = state.cutMode;
   guiControllers.forEach((controller) => controller.updateDisplay());
   updateMotionControlLabel();
@@ -1354,7 +1442,7 @@ canvas.addEventListener("click", () => {
 });
 
 const gui = new GUI({ title: "Scene Controls" });
-const impulseController = gui.add(ui, "impulseTarget", ["tip", "mid", "global"]).name("Impulse").onChange((value) => {
+const impulseController = gui.add(ui, "impulseTarget", ["tip", "mid", "global"]).name("Force Target").onChange((value) => {
   state.forceTarget = value;
 });
 impulseController.domElement.addEventListener("mouseenter", () => {
@@ -1366,6 +1454,9 @@ impulseController.domElement.addEventListener("mouseleave", () => {
 
 const windController = gui.add(ui, "wind").name("Wind").onChange((value) => {
   state.windEnabled = value;
+  if (!value) {
+    state.windOffAt = performance.now();
+  }
   state.statusUntil = performance.now() + 2200;
   statusBanner.textContent = state.windEnabled
     ? `Wind drive enabled in ${state.windMode} mode.`
@@ -1419,14 +1510,39 @@ guiControllers.push(
   }),
   windController,
   windModeController,
-  gui.add(ui, "render", ["solid", "wireframe"]).name("Render").onChange((value) => {
-    applyRenderMode(value);
-  }),
-  gui.add(ui, "tracePaths").name("Trace Paths").onChange((value) => {
-    state.showTraces = value;
-    updateControls();
-  }),
   cutModeController,
+);
+
+const tracePathsController = gui.add(ui, "tracePaths").name("Trace Paths").onChange((value) => {
+  state.showTraces = value;
+  updateControls();
+});
+const viewSectionHeader = document.createElement("div");
+viewSectionHeader.className = "gui-section-header";
+viewSectionHeader.textContent = "View";
+tracePathsController.domElement.before(viewSectionHeader);
+
+guiControllers.push(
+  tracePathsController,
+  gui.add(ui, "showArrows").name("Arrows").onChange((value) => {
+    state.showArrows = value;
+    if (!value) {
+      for (const arrow of windForceArrows) { arrow.visible = false; }
+      for (const arrow of impulseArrows) { arrow.visible = false; }
+      windDirectionArrow.visible = false;
+      if (windLabel) { windLabel.hidden = true; }
+    }
+  }),
+  gui.add(ui, "showNodeLabels").name("Node IDs").onChange((value) => {
+    state.showNodeLabels = value;
+    freePoints.visible = value;
+    fixedPoints.visible = value && !state.poleReleased;
+    anchorGroup.visible = value && !state.poleReleased;
+  }),
+  gui.add(ui, "showWireframe").name("Wireframe").onChange((value) => {
+    state.showWireframe = value;
+    edgeLines.visible = value;
+  }),
 );
 
 motionController = gui.add(ui, "toggleMotion").name("Pause");
@@ -1434,7 +1550,6 @@ motionController = gui.add(ui, "toggleMotion").name("Pause");
 gui.add(ui, "applyPulse").name("Apply Pulse");
 gui.add(ui, "releasePole").name("Release Pole");
 gui.add(ui, "reset").name("Reset");
-gui.add(ui, "resetView").name("Reset View");
 
 const cutModeRow = cutModeController.domElement;
 const restoreLinksRow = restoreLinksController.domElement;
@@ -1484,6 +1599,7 @@ function animate(now) {
 
   controls.update();
   updateWindDirectionArrow(now);
+  updateWindForceArrows(now);
   updateImpulseArrow(now);
   updateNodeLabels();
   updateWindLabel();
