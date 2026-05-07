@@ -562,11 +562,22 @@ function renderModalContent() {
     en: `
       <p>This flag is modeled as a small spring lattice with 12 nodes and 9 free vertical degrees of freedom after fixing the pole side.</p>
       <p>The per-frame solver is split into three stages: a Verlet prediction pass, a PBD constraint pass, and a final displacement extraction pass for the modal UI.</p>
-      <p>The Verlet update advances each free node with the damped position form</p>
+      <p>The starting point is the undamped position Verlet step</p>
+      <p>$$
+        x_{t+\\Delta t} = 2x_t - x_{t-\\Delta t} + a_t\\Delta t^2
+      $$</p>
+      <p>which can be rearranged into</p>
+      <p>$$
+        x_{t+\\Delta t} = x_t + (x_t - x_{t-\\Delta t}) + a_t\\Delta t^2
+      $$</p>
+      <p>The difference term $x_t - x_{t-\\Delta t}$ acts like an implicit velocity because it stores how far the node moved during the previous step without keeping a separate velocity variable.</p>
+      <p>To add damping, the solver assumes that this velocity-like term decays according to the continuous drag model $m\\dot{v} + cv = 0$, whose solution over one time step is $v_{t+\\Delta t} = v_t e^{-c\\Delta t / m}$.</p>
+      <p>Applying that decay to the implicit velocity produces the damped position form</p>
       <p>$$
         x_{t+\\Delta t} = x_t + (x_t - x_{t-\\Delta t}) e^{-c\\Delta t / m} + a_t\\Delta t^2
       $$</p>
       <p>where gravity and external drive first accumulate into $a_t$. This is why the solver stores <code>position</code> and <code>previousPosition</code> instead of a primary velocity state.</p>
+      <p>The GUI slider is therefore controlling the damping coefficient $c$ in kg/s, not a raw 0-to-1 blend factor. The actual per-step velocity retention is computed from $e^{-c\\Delta t / m}$, which keeps the behavior more consistent when $\\Delta t$ changes with frame rate.</p>
       <p>After that prediction, Position-Based Dynamics enforces the link lengths by iterating over every uncut link seven times. For each link, the solver measures the normalized stretch error</p>
       <p>$$
         \\frac{\\lVert x_b - x_a \\rVert - L}{\\lVert x_b - x_a \\rVert}
@@ -590,11 +601,22 @@ function renderModalContent() {
     zhTW: `
       <p>這面旗子被建模成一個小型彈簧晶格。總共有 12 個節點，左側固定在旗桿上的 3 個點不動，因此剩下 9 個自由的垂直位移自由度。</p>
       <p>每一幀的 solver 會分成三段：先做 Verlet 預測，再做 PBD 約束修正，最後再抽出 modal UI 要看的 displacement。</p>
-      <p>Verlet 更新對每個自由節點使用的形式是：</p>
+      <p>起點其實是沒有阻尼的 position Verlet：</p>
+      <p>$$
+        x_{t+\\Delta t} = 2x_t - x_{t-\\Delta t} + a_t\\Delta t^2
+      $$</p>
+      <p>把它改寫一下，就會變成：</p>
+      <p>$$
+        x_{t+\\Delta t} = x_t + (x_t - x_{t-\\Delta t}) + a_t\\Delta t^2
+      $$</p>
+      <p>其中 $x_t - x_{t-\\Delta t}$ 這一項可以看成「隱含速度」: 它代表節點上一個時間步到底移動了多少，只是 solver 沒有另外存一個顯式 velocity 變數。</p>
+      <p>如果要加入阻尼，可以假設這個速度型項 obey 連續阻力模型 $m\\dot{v} + cv = 0$。它在一個時間步內的解析解是 $v_{t+\\Delta t} = v_t e^{-c\\Delta t / m}$，也就是速度會做指數衰減。</p>
+      <p>把這個衰減直接套到隱含速度上，就得到這個專案使用的 damped Verlet 形式：</p>
       <p>$$
         x_{t+\\Delta t} = x_t + (x_t - x_{t-\\Delta t}) e^{-c\\Delta t / m} + a_t\\Delta t^2
       $$</p>
       <p>其中重力和外力會先累積到 $a_t$。這也是為什麼 solver 主要存的是 <code>position</code> 和 <code>previousPosition</code>，而不是把 velocity 當成主要狀態。</p>
+      <p>所以 GUI 上的 damping slider 調的其實是阻尼係數 $c$，單位是 kg/s，不是直接調一個 0 到 1 的比例。真正每一步保留多少「速度感」是由 $e^{-c\\Delta t / m}$ 算出來的，這樣在不同幀率下會比直接寫死 0.9、0.95 這種每幀係數更一致。</p>
       <p>做完這個預測之後，Position-Based Dynamics 會把每條未被 cut 的 link 重複掃過 7 輪，強制它們回到接近原本長度。對每條 link，solver 先量出正規化的伸長誤差：</p>
       <p>$$
         \\frac{\\lVert x_b - x_a \\rVert - L}{\\lVert x_b - x_a \\rVert}
