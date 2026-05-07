@@ -375,6 +375,30 @@
       user-select: none;
     }
 
+    .diagnostics-toggle {
+      border: none;
+      background: none;
+      color: var(--nord8);
+      font-size: 0.6rem;
+      width: 1.2rem;
+      height: 1.2rem;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      opacity: 0.75;
+      transition: opacity 120ms ease;
+    }
+
+    .diagnostics-toggle:hover {
+      opacity: 1;
+    }
+
+    #diagnostics-detail[hidden] {
+      display: none;
+    }
+
     .formula-tooltip {
       position: absolute;
       top: calc(100% + 0.5rem);
@@ -617,6 +641,7 @@
     <aside id="dashboard" aria-label="Verlet diagnostics">
       <section class="panel">
         <div class="panel-heading">
+          <button id="diagnostics-toggle" class="diagnostics-toggle" aria-label="Collapse details">▼</button>
           <h3>Verlet Diagnostics</h3>
           <span class="formula-trigger" tabindex="0" aria-label="Show Verlet formula">
             ?
@@ -627,36 +652,38 @@
             </span>
           </span>
         </div>
-        <p class="panel-note">Latest five pre-PBD Verlet predictions for one node axis.</p>
-        <div class="diagnostics-controls">
-          <label>
-            Node
-            <select id="diagnostics-node-select"></select>
-          </label>
-          <label>
-            Axis
-            <select id="diagnostics-axis-select">
-              <option value="x">x</option>
-              <option value="y">y</option>
-              <option value="z" selected>z</option>
-            </select>
-          </label>
+        <div id="diagnostics-detail">
+          <p class="panel-note">Latest five pre-PBD Verlet predictions for one node axis.</p>
+          <div class="diagnostics-controls">
+            <label>
+              Node
+              <select id="diagnostics-node-select"></select>
+            </label>
+            <label>
+              Axis
+              <select id="diagnostics-axis-select">
+                <option value="x">x</option>
+                <option value="y">y</option>
+                <option value="z" selected>z</option>
+              </select>
+            </label>
+          </div>
+          <table class="diagnostics-table">
+            <thead>
+              <tr>
+                <th>Frame</th>
+                <th>pos</th>
+                <th>prev</th>
+                <th>delta</th>
+                <th>damp</th>
+                <th>acc</th>
+                <th>dt ms</th>
+                <th>next</th>
+              </tr>
+            </thead>
+            <tbody id="verlet-diagnostics-body"></tbody>
+          </table>
         </div>
-        <table class="diagnostics-table">
-          <thead>
-            <tr>
-              <th>Frame</th>
-              <th>pos</th>
-              <th>prev</th>
-              <th>delta</th>
-              <th>damp</th>
-              <th>acc</th>
-              <th>dt ms</th>
-              <th>next</th>
-            </tr>
-          </thead>
-          <tbody id="verlet-diagnostics-body"></tbody>
-        </table>
       </section>
     </aside>
 

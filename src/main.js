@@ -233,6 +233,17 @@ function buildDiagnosticsControls() {
     diagnosticsSelection.axis = event.target.value;
     renderVerletDiagnostics();
   });
+
+  const diagnosticsToggle = document.getElementById("diagnostics-toggle");
+  const diagnosticsDetail = document.getElementById("diagnostics-detail");
+  if (diagnosticsToggle && diagnosticsDetail) {
+    diagnosticsToggle.addEventListener("click", () => {
+      const collapsed = !diagnosticsDetail.hidden;
+      diagnosticsDetail.hidden = collapsed;
+      diagnosticsToggle.textContent = collapsed ? "▶" : "▼";
+      diagnosticsToggle.setAttribute("aria-label", collapsed ? "Expand details" : "Collapse details");
+    });
+  }
 }
 
 for (let row = 0; row < ROWS; row += 1) {
@@ -649,13 +660,13 @@ function renderVerletDiagnostics() {
     ? verletDiagnosticsHistory.map((entry) => `
       <tr>
         <td>${entry.frame}</td>
-        <td>${entry.nodeTerms[nodeId].position[axis].toFixed(2)}</td>
-        <td>${entry.nodeTerms[nodeId].previousPosition[axis].toFixed(2)}</td>
-        <td>${entry.nodeTerms[nodeId].delta[axis].toFixed(2)}</td>
+        <td>${entry.nodeTerms[nodeId].position[axis].toFixed(1)}</td>
+        <td>${entry.nodeTerms[nodeId].previousPosition[axis].toFixed(1)}</td>
+        <td>${entry.nodeTerms[nodeId].delta[axis].toFixed(1)}</td>
         <td>${entry.damping.toFixed(2)}</td>
-        <td>${entry.nodeTerms[nodeId].acceleration[axis].toFixed(2)}</td>
-        <td>${entry.dtMs.toFixed(2)}</td>
-        <td>${entry.nodeTerms[nodeId].nextPosition[axis].toFixed(2)}</td>
+        <td>${entry.nodeTerms[nodeId].acceleration[axis].toFixed(0)}</td>
+        <td>${entry.dtMs.toFixed(0)}</td>
+        <td>${entry.nodeTerms[nodeId].nextPosition[axis].toFixed(1)}</td>
       </tr>
     `).join("")
     : `
