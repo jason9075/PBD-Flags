@@ -6,11 +6,10 @@ const canvas = document.getElementById("canvas");
 const nodeLabelsOverlay = document.getElementById("node-labels");
 const impulseInfo = document.getElementById("impulse-info");
 const windInfo = document.getElementById("wind-info");
-const modeInfo = document.getElementById("mode-info");
-const explorerInfo = document.getElementById("mode-explorer-info");
 const statusBanner = document.getElementById("status-banner");
-const amplitudeChart = document.getElementById("amplitude-chart");
-const modeGallery = document.getElementById("mode-gallery");
+const verletDiagnosticsBody = document.getElementById("verlet-diagnostics-body");
+const diagnosticsNodeSelect = document.getElementById("diagnostics-node-select");
+const diagnosticsAxisSelect = document.getElementById("diagnostics-axis-select");
 const openMathButton = document.getElementById("open-math");
 const closeMathButton = document.getElementById("close-math");
 const languageToggle = document.getElementById("language-toggle");
@@ -29,6 +28,7 @@ const FLAG_TOP_OFFSET = 0.1;
 const FLAG_TOP_Y = poleHeight * 0.5 - FLAG_TOP_OFFSET;
 const POLE_X = -1.2 * REST_X;
 const TRACE_LENGTH = 54;
+const DIAGNOSTIC_HISTORY_LENGTH = 5;
 const DISPLACEMENT_DIRECTION = new THREE.Vector3(0.12, 0, 1).normalize();
 const WIND_DISPLACEMENT_DIRECTION = new THREE.Vector3(1, 0, -0.12).normalize();
 const GRAVITY_ACCELERATION = -9.8;
@@ -98,9 +98,7 @@ const DEFAULT_STATE = {
   windMode: "steady",
   renderMode: "solid",
   showTraces: true,
-  showArrows: true,
   cutMode: false,
-  activeMode: null,
   statusUntil: 0,
   impulseUntil: 0,
   lastImpulseTarget: "tip",
@@ -119,17 +117,17 @@ const ui = {
   wind: state.windEnabled,
   windMode: state.windMode,
   render: state.renderMode,
-  motion: state.isAnimating,
   tracePaths: state.showTraces,
-  modeArrows: state.showArrows,
   cutMode: state.cutMode,
   applyPulse: () => applyImpulse(state.forceTarget, state.forceScale),
+  toggleMotion: () => toggleMotion(),
   releasePole: () => releasePoleAnchors(),
   reset: () => resetSceneState(),
   restoreLinks: () => restoreAllLinks(),
   resetView: () => resetView(),
 };
 const guiControllers = [];
+let motionController = null;
 
 const nodes = [];
 const links = [];
@@ -137,9 +135,13 @@ const triangles = [];
 const tailIndices = [COLS - 1, 2 * COLS - 1, 3 * COLS - 1];
 const traceStates = tailIndices.map(() => []);
 const traceLines = [];
-const amplitudeRows = [];
-const arrowHelpers = [];
 const nodeLabelElements = [];
+const verletDiagnosticsHistory = [];
+const diagnosticsSelection = {
+  nodeId: 11,
+  axis: "z",
+};
+let diagnosticsFrameIndex = 0;
 const pointerScreen = new THREE.Vector2();
 const projectedA = new THREE.Vector3();
 const projectedB = new THREE.Vector3();
@@ -216,6 +218,26 @@ function buildNodeLabels() {
   });
 }
 
+function buildDiagnosticsControls() {
+  if (!diagnosticsNodeSelect || !diagnosticsAxisSelect) {
+    return;
+  }
+
+  diagnosticsNodeSelect.innerHTML = nodes.map((node) => `
+    <option value="${node.index}"${node.index === diagnosticsSelection.nodeId ? " selected" : ""}>node ${node.index}</option>
+  `).join("");
+
+  diagnosticsNodeSelect.addEventListener("change", (event) => {
+    diagnosticsSelection.nodeId = Number(event.target.value);
+    renderVerletDiagnostics();
+  });
+
+  diagnosticsAxisSelect.addEventListener("change", (event) => {
+    diagnosticsSelection.axis = event.target.value;
+    renderVerletDiagnostics();
+  });
+}
+
 for (let row = 0; row < ROWS; row += 1) {
   for (let col = 0; col < COLS; col += 1) {
     const index = nodeIndex(row, col);
@@ -230,7 +252,6 @@ for (let row = 0; row < ROWS; row += 1) {
       position: fixed ? anchor.clone() : getInitialNodePosition({ index, anchor }),
       previousPosition: fixed ? anchor.clone() : getInitialNodePosition({ index, anchor }),
       acceleration: new THREE.Vector3(),
-      displacement: 0,
     });
   }
 }
@@ -415,153 +436,11 @@ for (let index = 0; index < tailIndices.length; index += 1) {
   scene.add(line);
 }
 
-function buildModeMatrix(stiffnessScale, massScale) {
-  const size = FREE_INDICES.length;
-  const nodeMass = getNodeMass(massScale);
-  const matrix = Array.from({ length: size }, () => Array(size).fill(0));
-  for (const link of links) {
-    if (link.cut) {
-      continue;
-    }
-    const { a, b, weight } = link;
-    const freeA = FREE_LOOKUP.get(a);
-    const freeB = FREE_LOOKUP.get(b);
-    const k = (weight * stiffnessScale) / nodeMass;
-    if (freeA !== undefined) {
-      matrix[freeA][freeA] += k;
-    }
-    if (freeB !== undefined) {
-      matrix[freeB][freeB] += k;
-    }
-    if (freeA !== undefined && freeB !== undefined) {
-      matrix[freeA][freeB] -= k;
-      matrix[freeB][freeA] -= k;
-    }
-  }
-  return matrix;
-}
-
-function jacobiEigenDecomposition(input) {
-  const size = input.length;
-  const matrix = input.map((row) => [...row]);
-  const vectors = Array.from({ length: size }, (_, row) =>
-    Array.from({ length: size }, (_, col) => (row === col ? 1 : 0)),
-  );
-  const maxIterations = 80;
-
-  for (let iteration = 0; iteration < maxIterations; iteration += 1) {
-    let p = 0;
-    let q = 1;
-    let maxValue = Math.abs(matrix[p][q]);
-    for (let row = 0; row < size; row += 1) {
-      for (let col = row + 1; col < size; col += 1) {
-        const value = Math.abs(matrix[row][col]);
-        if (value > maxValue) {
-          maxValue = value;
-          p = row;
-          q = col;
-        }
-      }
-    }
-    if (maxValue < 1e-10) {
-      break;
-    }
-
-    const app = matrix[p][p];
-    const aqq = matrix[q][q];
-    const apq = matrix[p][q];
-    const theta = (aqq - app) / (2 * apq);
-    const t = Math.sign(theta || 1) / (Math.abs(theta) + Math.sqrt(theta * theta + 1));
-    const c = 1 / Math.sqrt(t * t + 1);
-    const s = t * c;
-
-    for (let col = 0; col < size; col += 1) {
-      if (col !== p && col !== q) {
-        const mp = matrix[col][p];
-        const mq = matrix[col][q];
-        matrix[col][p] = c * mp - s * mq;
-        matrix[p][col] = matrix[col][p];
-        matrix[col][q] = s * mp + c * mq;
-        matrix[q][col] = matrix[col][q];
-      }
-    }
-
-    matrix[p][p] = c * c * app - 2 * s * c * apq + s * s * aqq;
-    matrix[q][q] = s * s * app + 2 * s * c * apq + c * c * aqq;
-    matrix[p][q] = 0;
-    matrix[q][p] = 0;
-
-    for (let row = 0; row < size; row += 1) {
-      const vp = vectors[row][p];
-      const vq = vectors[row][q];
-      vectors[row][p] = c * vp - s * vq;
-      vectors[row][q] = s * vp + c * vq;
-    }
-  }
-
-  const values = matrix.map((row, index) => row[index]);
-  const result = values.map((value, index) => ({
-    value,
-    vector: vectors.map((row) => row[index]),
-  }));
-  result.sort((left, right) => left.value - right.value);
-
-  result.forEach((mode) => {
-    const norm = Math.hypot(...mode.vector) || 1;
-    mode.vector = mode.vector.map((entry) => entry / norm);
-    mode.frequency = Math.sqrt(Math.max(mode.value, 0));
-  });
-
-  return result;
-}
-
-let modes = [];
-
-function updateModes() {
-  modes = jacobiEigenDecomposition(buildModeMatrix(state.stiffnessScale, state.massScale));
-  buildModeGallery();
-  amplitudeRows.length = 0;
-  buildAmplitudeChart();
-}
-
-function buildModeGallery() {
-  modeGallery.innerHTML = "";
-  modes.forEach((mode, index) => {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = "mode-button";
-    if (state.activeMode === index) {
-      button.classList.add("active");
-    }
-    button.innerHTML = `<strong>v${index + 1}</strong>`;
-    button.addEventListener("click", () => exciteMode(index));
-    modeGallery.appendChild(button);
-  });
-}
-
-function buildAmplitudeChart() {
-  amplitudeChart.innerHTML = "";
-  for (let index = 0; index < modes.length; index += 1) {
-    const row = document.createElement("div");
-    row.className = "bar-row";
-    row.innerHTML = `
-      <span>v${index + 1}</span>
-      <div class="bar-track"><div class="bar-fill"></div></div>
-      <strong>0.00</strong>
-    `;
-    amplitudeChart.appendChild(row);
-    amplitudeRows.push({
-      fill: row.querySelector(".bar-fill"),
-      value: row.querySelector("strong"),
-    });
-  }
-}
-
 function renderModalContent() {
   const modalCopy = {
     en: `
-      <p>This flag is modeled as a small spring lattice with 12 nodes and 9 free vertical degrees of freedom after fixing the pole side.</p>
-      <p>The per-frame solver is split into three stages: a Verlet prediction pass, a PBD constraint pass, and a final displacement extraction pass for the modal UI.</p>
+      <p>This flag is modeled as a small spring lattice with 12 nodes. The three pole-side nodes are pinned by default, and the remaining nodes move in full 3D.</p>
+      <p>The per-frame solver is split into two stages: a Verlet prediction pass and a Position-Based Dynamics constraint pass.</p>
       <p>The starting point is the undamped position Verlet step</p>
       <p>$$
         x_{t+\\Delta t} = 2x_t - x_{t-\\Delta t} + a_t\\Delta t^2
@@ -583,24 +462,17 @@ function renderModalContent() {
         \\frac{\\lVert x_b - x_a \\rVert - L}{\\lVert x_b - x_a \\rVert}
       $$</p>
       <p>and scales it by the spring response $1 - e^{-k w\\Delta t^2 / m}$ before splitting the positional correction across the two endpoints.</p>
-      <p>The free displacement vector $q \\in \\mathbb{R}^9$ follows a damped second-order system:</p>
-      <p>$$
-        \\ddot{q} + c\\dot{q} + Kq = f(t)
-      $$</p>
-      <p>Here $K$ is the stiffness matrix assembled from horizontal and vertical springs. Its eigenvectors define the modal basis:</p>
-      <p>$$
-        K\\mathbf{v}_i = \\lambda_i \\mathbf{v}_i, \\qquad \\omega_i = \\sqrt{\\lambda_i}
-      $$</p>
-      <p>Projecting the current shape onto each mode reveals which oscillation family the chosen force excites most strongly. Localized forcing near the tip tends to emphasize higher-frequency modes because it injects sharper spatial variation.</p>
-      <p>In the cloth step, the GUI stiffness is a spring constant $k$ in N/m. Each link uses the dimensionless response $1 - e^{-k w\\Delta t^2 / m}$, where $w$ is the link weight and $m$ is the per-node mass. Each free endpoint receives half of that positional correction, which keeps the pairwise solve balanced while tying the correction strength to physical units.</p>
-      <pre><code class="language-js">for (const mode of modes) {
-  const amplitude = dot(displacement, mode.vector);
-  bars.push(Math.abs(amplitude));
-}</code></pre>
+      <p>Here $k$ is the GUI spring stiffness in N/m, $w$ is the per-link weight, and $m$ is the per-node mass. Using an exponential response keeps the correction dimensionless while still tying it back to the physical control values.</p>
+      <pre><code class="language-js">const verletStep = node.position.clone()
+  .sub(node.previousPosition)
+  .multiplyScalar(Math.exp(-c * dt / m));
+node.position
+  .add(verletStep)
+  .addScaledVector(node.acceleration, dt * dt);</code></pre>
     `,
     zhTW: `
-      <p>這面旗子被建模成一個小型彈簧晶格。總共有 12 個節點，左側固定在旗桿上的 3 個點不動，因此剩下 9 個自由的垂直位移自由度。</p>
-      <p>每一幀的 solver 會分成三段：先做 Verlet 預測，再做 PBD 約束修正，最後再抽出 modal UI 要看的 displacement。</p>
+      <p>這面旗子被建模成一個 12 節點的小型彈簧晶格。靠旗桿的 3 個節點預設固定，其餘節點在 3D 空間中運動。</p>
+      <p>每一幀的 solver 分成兩段：先做 Verlet 預測，再做 Position-Based Dynamics 約束修正。</p>
       <p>起點其實是沒有阻尼的 position Verlet：</p>
       <p>$$
         x_{t+\\Delta t} = 2x_t - x_{t-\\Delta t} + a_t\\Delta t^2
@@ -622,21 +494,13 @@ function renderModalContent() {
         \\frac{\\lVert x_b - x_a \\rVert - L}{\\lVert x_b - x_a \\rVert}
       $$</p>
       <p>再乘上彈簧響應 $1 - e^{-k w\\Delta t^2 / m}$，最後把位置修正量分配到兩個端點上。</p>
-      <p>把自由位移寫成向量 $q \\in \\mathbb{R}^9$，其運動可近似為阻尼二階系統：</p>
-      <p>$$
-        \\ddot{q} + c\\dot{q} + Kq = f(t)
-      $$</p>
-      <p>其中 $K$ 是由水平與垂直彈簧組裝出的剛度矩陣。對它做特徵分解後，可得到模態基底：</p>
-      <p>$$
-        K\\mathbf{v}_i = \\lambda_i \\mathbf{v}_i, \\qquad \\omega_i = \\sqrt{\\lambda_i}
-      $$</p>
-      <p>每個特徵向量 $\\mathbf{v}_i$ 對應一種「純模式」的旗幟形狀，而特徵值決定它的自然頻率。當你把目前位移投影到這些模態上，就能看出哪個模式最主導當前運動。</p>
-      <p>尾端施力比全域施力更容易激發高頻模態，因為尾端脈衝在空間上更局部，會帶入較尖銳的形變，這種形狀和高階模態更接近。</p>
-      <p>在布料步進裡，GUI 的 stiffness 現在被定義成彈簧常數 $k$，單位是 N/m。每條 link 會用 $1 - e^{-k w\\Delta t^2 / m}$ 當成無因次響應，其中 $w$ 是 link weight，$m$ 是每個節點分到的質量。之後再把一半的位置修正量分給每個自由端點，讓兩端共同承擔修正，同時把修正強度綁回有單位的物理量。</p>
-      <pre><code class="language-js">for (const mode of modes) {
-  const amplitude = dot(displacement, mode.vector);
-  bars.push(Math.abs(amplitude));
-}</code></pre>
+      <p>這裡的 $k$ 是 GUI 上的彈簧剛度，單位是 N/m，$w$ 是 link 權重，$m$ 是每個節點分到的質量。用指數形式可以讓修正量保持無因次，同時又和實際控制參數維持對應關係。</p>
+      <pre><code class="language-js">const verletStep = node.position.clone()
+  .sub(node.previousPosition)
+  .multiplyScalar(Math.exp(-c * dt / m));
+node.position
+  .add(verletStep)
+  .addScaledVector(node.acceleration, dt * dt);</code></pre>
     `,
   };
 
@@ -658,12 +522,20 @@ function updateNodeMotion(dt) {
   const gravity = new THREE.Vector3(0, GRAVITY_ACCELERATION, 0);
   const damping = Math.exp(-state.dampingScale * dt / state.massScale);
   const constraintIterations = 7;
-  const displacementDirection = rotateDirectionByAnchor(DISPLACEMENT_DIRECTION);
   const dtSquared = dt * dt;
   const nodeMass = getNodeMass();
+  const previousPositions = new Map();
+  const nodeTerms = {};
 
   for (const node of nodes) {
     if (node.fixed) {
+      nodeTerms[node.index] = {
+        position: node.anchor.clone(),
+        previousPosition: node.anchor.clone(),
+        delta: new THREE.Vector3(),
+        acceleration: new THREE.Vector3(),
+        nextPosition: node.anchor.clone(),
+      };
       node.position.copy(node.anchor);
       node.previousPosition.copy(node.anchor);
       node.acceleration.set(0, 0, 0);
@@ -674,8 +546,20 @@ function updateNodeMotion(dt) {
     node.acceleration.add(gravity);
 
     const currentPosition = node.position.clone();
-    const verletStep = node.position.clone().sub(node.previousPosition).multiplyScalar(damping);
-    node.position.add(verletStep).addScaledVector(node.acceleration, dtSquared);
+    previousPositions.set(node.index, currentPosition);
+    const previousPosition = node.previousPosition.clone();
+    const delta = currentPosition.clone().sub(previousPosition);
+    const acceleration = node.acceleration.clone();
+    const verletStep = delta.clone().multiplyScalar(damping);
+    const nextPosition = currentPosition.clone().add(verletStep).addScaledVector(acceleration, dtSquared);
+    nodeTerms[node.index] = {
+      position: currentPosition,
+      previousPosition,
+      delta,
+      acceleration,
+      nextPosition: nextPosition.clone(),
+    };
+    node.position.copy(nextPosition);
     node.previousPosition.copy(currentPosition);
     node.acceleration.set(0, 0, 0);
   }
@@ -721,12 +605,91 @@ function updateNodeMotion(dt) {
     if (node.fixed) {
       node.position.copy(node.anchor);
       node.previousPosition.copy(node.anchor);
-      node.displacement = 0;
+    }
+  }
+
+  let maxSpeed = 0;
+  let totalSpeed = 0;
+  let movableCount = 0;
+  let tailDisplacement = 0;
+
+  for (const node of nodes) {
+    if (node.fixed) {
       continue;
     }
 
-    node.displacement = node.position.clone().sub(node.anchor).dot(displacementDirection);
+    const previousPosition = previousPositions.get(node.index);
+    const speed = previousPosition ? node.position.distanceTo(previousPosition) / Math.max(dt, 1e-6) : 0;
+    maxSpeed = Math.max(maxSpeed, speed);
+    totalSpeed += speed;
+    movableCount += 1;
+
+    if (tailIndices.includes(node.index)) {
+      tailDisplacement += node.position.distanceTo(node.anchor);
+    }
   }
+
+  return {
+    dtMs: dt * 1000,
+    damping,
+    nodeTerms,
+    maxSpeed,
+    avgSpeed: movableCount ? totalSpeed / movableCount : 0,
+    tailDisplacement: tailDisplacement / tailIndices.length,
+    iterations: constraintIterations,
+  };
+}
+
+function renderVerletDiagnostics() {
+  if (!verletDiagnosticsBody) {
+    return;
+  }
+
+  const axis = diagnosticsSelection.axis;
+  const nodeId = diagnosticsSelection.nodeId;
+
+  const rows = verletDiagnosticsHistory.length
+    ? verletDiagnosticsHistory.map((entry) => `
+      <tr>
+        <td>${entry.frame}</td>
+        <td>${entry.nodeTerms[nodeId].position[axis].toFixed(2)}</td>
+        <td>${entry.nodeTerms[nodeId].previousPosition[axis].toFixed(2)}</td>
+        <td>${entry.nodeTerms[nodeId].delta[axis].toFixed(2)}</td>
+        <td>${entry.damping.toFixed(2)}</td>
+        <td>${entry.nodeTerms[nodeId].acceleration[axis].toFixed(2)}</td>
+        <td>${entry.dtMs.toFixed(2)}</td>
+        <td>${entry.nodeTerms[nodeId].nextPosition[axis].toFixed(2)}</td>
+      </tr>
+    `).join("")
+    : `
+      <tr>
+        <td>--</td>
+        <td>--</td>
+        <td>--</td>
+        <td>--</td>
+        <td>--</td>
+        <td>--</td>
+        <td>--</td>
+        <td>--</td>
+      </tr>
+    `;
+
+  verletDiagnosticsBody.innerHTML = rows;
+}
+
+function pushVerletDiagnostics(frameMetrics) {
+  verletDiagnosticsHistory.unshift({
+    frame: `f${frameMetrics.frame}`,
+    dtMs: frameMetrics.dtMs,
+    damping: frameMetrics.damping,
+    nodeTerms: frameMetrics.nodeTerms,
+  });
+
+  if (verletDiagnosticsHistory.length > DIAGNOSTIC_HISTORY_LENGTH) {
+    verletDiagnosticsHistory.length = DIAGNOSTIC_HISTORY_LENGTH;
+  }
+
+  renderVerletDiagnostics();
 }
 
 function addVelocityImpulse(node, direction, magnitude, dt = 1 / 60) {
@@ -835,13 +798,11 @@ function restoreAllLinks() {
   links.forEach((link) => {
     link.cut = false;
   });
-  state.activeMode = null;
   state.hoveredLinkIndex = -1;
   highlightedLink.visible = false;
-  updateModes();
   updateGeometry();
   state.statusUntil = performance.now() + 2200;
-  statusBanner.textContent = "Restored all links. The flag mesh and modal coupling are back to the intact lattice.";
+  statusBanner.textContent = "Restored all links. The flag mesh and spring lattice are back to the intact state.";
 }
 
 function syncPoleAnchorState() {
@@ -867,7 +828,6 @@ function releasePoleAnchors() {
   }
 
   state.poleReleased = true;
-  state.activeMode = null;
   nodes.forEach((node) => {
     if (node.col !== 0) {
       return;
@@ -876,10 +836,9 @@ function releasePoleAnchors() {
     node.acceleration.set(0, 0, 0);
   });
   syncPoleAnchorState();
-  buildModeGallery();
   updateGeometry();
   state.statusUntil = performance.now() + 2600;
-  statusBanner.textContent = "Released the three pole-side nodes. The flag is now fully free, while the modal readout still reflects the pinned-edge basis.";
+  statusBanner.textContent = "Released the three pole-side nodes. The flag is now fully free and responds only to the Verlet + PBD cloth solve.";
 }
 
 function updateHighlightedLink() {
@@ -959,11 +918,9 @@ function cutHoveredLink() {
   hovered.cut = true;
   state.hoveredLinkIndex = -1;
   highlightedLink.visible = false;
-  state.activeMode = null;
-  updateModes();
   updateGeometry();
   state.statusUntil = performance.now() + 2400;
-  statusBanner.textContent = `Cut link ${hovered.a}-${hovered.b}. Modal coupling and line rendering updated.`;
+  statusBanner.textContent = `Cut link ${hovered.a}-${hovered.b}. The cloth constraints and line rendering updated.`;
 }
 
 function updateGeometry() {
@@ -1065,60 +1022,6 @@ function updateTraces() {
   });
 }
 
-function getDisplacementVector() {
-  return FREE_INDICES.map((index) => nodes[index].displacement);
-}
-
-function dot(left, right) {
-  let sum = 0;
-  for (let index = 0; index < left.length; index += 1) {
-    sum += left[index] * right[index];
-  }
-  return sum;
-}
-
-function updateAmplitudeUI(now) {
-  const displacement = getDisplacementVector();
-  const amplitudes = modes.map((mode) => Math.abs(dot(displacement, mode.vector)));
-  const maxAmplitude = Math.max(...amplitudes, 0.0001);
-  const dominantIndex = amplitudes.indexOf(Math.max(...amplitudes));
-  const dominantValue = amplitudes[dominantIndex] || 0;
-
-  amplitudeRows.forEach((row, index) => {
-    const amplitude = amplitudes[index];
-    row.fill.style.width = `${(amplitude / maxAmplitude) * 100}%`;
-    row.value.textContent = amplitude.toFixed(2);
-  });
-
-  if (dominantValue > 0.03) {
-    if (state.statusUntil < now) {
-      statusBanner.textContent = `Detected v${dominantIndex + 1} as the leading response. Compare tail forcing against global forcing to see more high-mode energy.`;
-    }
-  } else {
-    if (state.statusUntil < now) {
-      statusBanner.textContent = "Trigger an impulse to compare how localized forcing amplifies higher modes at the flag tail.";
-    }
-  }
-
-  updateModeArrows(dominantIndex, dominantValue);
-}
-
-function updateModeArrows(dominantIndex, dominantValue) {
-  arrowHelpers.forEach((arrow, index) => {
-    if (!state.showArrows || dominantValue < 0.03) {
-      arrow.visible = false;
-      return;
-    }
-    const amplitude = modes[dominantIndex].vector[index];
-    const direction = rotateDirectionByAnchor(new THREE.Vector3(0.2, 0, amplitude));
-    const origin = nodes[FREE_INDICES[index]].position;
-    arrow.position.copy(origin);
-    arrow.setDirection(direction);
-    arrow.setLength(0.14 + Math.abs(amplitude) * 0.7, 0.08, 0.05);
-    arrow.visible = true;
-  });
-}
-
 function updateWindDirectionArrow(now = performance.now()) {
   const topLeft = nodes[nodeIndex(0, 0)].position;
   const anchorOffset = new THREE.Vector3(0.15, 0, 0);
@@ -1183,19 +1086,7 @@ function applyImpulse(target, magnitude) {
   impulseArrow.line.material.opacity = 1;
   impulseArrow.cone.material.opacity = 1;
   state.statusUntil = performance.now() + 2600;
-  statusBanner.textContent = `Applied ${target} pulse at ${magnitude.toFixed(1)} N for ${(IMPULSE_DURATION * 1000).toFixed(1)} ms. Watch which bars rise first.`;
-}
-
-function exciteMode(modeIndex) {
-  state.activeMode = modeIndex;
-  buildModeGallery();
-  const scale = (state.forceScale * IMPULSE_DURATION * 0.62) / getNodeMass();
-  const modeDirection = rotateDirectionByAnchor(DISPLACEMENT_DIRECTION);
-  FREE_INDICES.forEach((nodeId, vectorIndex) => {
-    addVelocityImpulse(nodes[nodeId], modeDirection, modes[modeIndex].vector[vectorIndex] * scale);
-  });
-  state.statusUntil = performance.now() + 2800;
-  statusBanner.textContent = `Excited pure mode v${modeIndex + 1} with a ${state.forceScale.toFixed(1)} N equivalent pulse shape.`;
+  statusBanner.textContent = `Applied ${target} pulse at ${magnitude.toFixed(1)} N for ${(IMPULSE_DURATION * 1000).toFixed(1)} ms. Watch how the tail motion and constraint recovery respond.`;
 }
 
 function applyRenderMode(value) {
@@ -1216,19 +1107,19 @@ function resetSceneState() {
   highlightedLink.visible = false;
 
   for (const node of nodes) {
-    node.displacement = 0;
     const initialPosition = node.fixed ? node.anchor.clone() : getInitialNodePosition(node);
     node.position.copy(initialPosition);
     node.previousPosition.copy(initialPosition);
     node.acceleration.set(0, 0, 0);
   }
   traceStates.forEach((trace) => trace.splice(0, trace.length));
+  verletDiagnosticsHistory.length = 0;
+  diagnosticsFrameIndex = 0;
   syncPoleAnchorState();
-  buildModeGallery();
-  updateModes();
   updateControls();
   applyRenderMode(state.renderMode);
   updateGeometry();
+  renderVerletDiagnostics();
   state.statusUntil = performance.now() + 2200;
   statusBanner.textContent = "Reset scene state and restored the default parameters.";
 }
@@ -1237,6 +1128,22 @@ function resetView() {
   camera.position.set(0.3, 0.1, 10.8);
   controls.target.set(1.45, 0.45, 0);
   controls.update();
+}
+
+function updateMotionControlLabel() {
+  if (!motionController) {
+    return;
+  }
+  motionController.name(state.isAnimating ? "Pause" : "Play");
+}
+
+function toggleMotion() {
+  state.isAnimating = !state.isAnimating;
+  updateMotionControlLabel();
+  state.statusUntil = performance.now() + 1800;
+  statusBanner.textContent = state.isAnimating
+    ? "Simulation resumed. Verlet prediction and PBD projection are running again."
+    : "Simulation paused. The current frame is held for inspection.";
 }
 
 function syncGuiState() {
@@ -1248,11 +1155,10 @@ function syncGuiState() {
   ui.wind = state.windEnabled;
   ui.windMode = state.windMode;
   ui.render = state.renderMode;
-  ui.motion = state.isAnimating;
   ui.tracePaths = state.showTraces;
-  ui.modeArrows = state.showArrows;
   ui.cutMode = state.cutMode;
   guiControllers.forEach((controller) => controller.updateDisplay());
+  updateMotionControlLabel();
   updateWindDirectionArrow();
 }
 
@@ -1350,16 +1256,6 @@ windModeController.domElement.addEventListener("mouseleave", () => {
   windInfo.hidden = true;
 });
 
-const modeCuesController = gui.add(ui, "modeArrows").name("Mode Cues").onChange((value) => {
-  state.showArrows = value;
-  updateControls();
-});
-modeCuesController.domElement.addEventListener("mouseenter", () => {
-  modeInfo.hidden = false;
-});
-modeCuesController.domElement.addEventListener("mouseleave", () => {
-  modeInfo.hidden = true;
-});
 const cutModeController = gui.add(ui, "cutMode").name("Cut Mode").onChange((value) => {
   setCutMode(value);
   state.statusUntil = performance.now() + 2200;
@@ -1378,13 +1274,11 @@ const restoreLinksController = gui.add(ui, "restoreLinks").name("Restore Links")
   }),
   gui.add(ui, "stiffness", 20, 1200, 10).name("Spring Stiffness (N/m)").onChange((value) => {
     state.stiffnessScale = value;
-    updateModes();
     state.statusUntil = performance.now() + 2400;
     statusBanner.textContent = `Set spring stiffness to ${state.stiffnessScale.toFixed(0)} N/m. The per-link response is 1 - exp(-k w dt^2 / m).`;
   }),
   gui.add(ui, "mass", 0.5, 2.8, 0.1).name("Mass (kg)").onChange((value) => {
     state.massScale = value;
-    updateModes();
     state.statusUntil = performance.now() + 2400;
     statusBanner.textContent = `Set total cloth mass to ${state.massScale.toFixed(1)} kg. It is split across all 12 nodes, so wind and impulses drive the flag less aggressively.`;
   }),
@@ -1398,16 +1292,14 @@ const restoreLinksController = gui.add(ui, "restoreLinks").name("Restore Links")
   gui.add(ui, "render", ["solid", "wireframe"]).name("Render").onChange((value) => {
     applyRenderMode(value);
   }),
-  gui.add(ui, "motion").name("Motion").onChange((value) => {
-    state.isAnimating = value;
-  }),
   gui.add(ui, "tracePaths").name("Trace Paths").onChange((value) => {
     state.showTraces = value;
     updateControls();
   }),
-  modeCuesController,
   cutModeController,
 );
+
+motionController = gui.add(ui, "toggleMotion").name("Pause");
 
 gui.add(ui, "applyPulse").name("Apply Pulse");
 gui.add(ui, "releasePole").name("Release Pole");
@@ -1418,7 +1310,6 @@ const cutModeRow = cutModeController.domElement;
 const restoreLinksRow = restoreLinksController.domElement;
 const cutModeWidget = cutModeRow.querySelector(".widget");
 const restoreLinksButton = restoreLinksRow.querySelector("button");
-const modeExplorerTitle = document.getElementById("mode-explorer-title");
 
 if (cutModeWidget && restoreLinksButton) {
   restoreLinksButton.textContent = "Restore";
@@ -1430,32 +1321,10 @@ if (cutModeWidget && restoreLinksButton) {
   restoreLinksRow.style.display = "none";
 }
 
-if (modeExplorerTitle && explorerInfo) {
-  modeExplorerTitle.addEventListener("mouseenter", () => {
-    explorerInfo.hidden = false;
-  });
-  modeExplorerTitle.addEventListener("mouseleave", () => {
-    explorerInfo.hidden = true;
-  });
-}
-
-for (let index = 0; index < FREE_INDICES.length; index += 1) {
-  const arrow = new THREE.ArrowHelper(
-    new THREE.Vector3(0, 0, 1),
-    nodes[FREE_INDICES[index]].position,
-    0.3,
-    0xa3be8c,
-    0.08,
-    0.05,
-  );
-  arrow.visible = false;
-  arrowHelpers.push(arrow);
-  scene.add(arrow);
-}
-
 buildNodeLabels();
-updateModes();
+buildDiagnosticsControls();
 renderModalContent();
+renderVerletDiagnostics();
 updateControls();
 applyRenderMode(state.renderMode);
 resize();
@@ -1471,10 +1340,13 @@ function animate(now) {
 
   if (state.isAnimating) {
     applyWindDrive(now);
-    updateNodeMotion(dt);
+    const frameMetrics = updateNodeMotion(dt);
     updateGeometry();
     updateTraces();
-    updateAmplitudeUI(now);
+    pushVerletDiagnostics({
+      frame: ++diagnosticsFrameIndex,
+      ...frameMetrics,
+    });
   }
   if (state.cutMode && state.pointerInsideCanvas) {
     updateHoveredLink(pointerScreen.x, pointerScreen.y);
